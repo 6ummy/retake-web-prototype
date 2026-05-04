@@ -252,12 +252,13 @@ export function useCanvasDrawing({
       }
       if (brushCursorRef.current) brushCursorRef.current.style.display = 'none';
     };
-    const onMouseEnter = () => {
+    const onMouseEnter = (e) => {
       if (
         activeToolRef.current
         && (eraserModeRef.current === 'freehand' || (eraserModeRef.current === 'magic' && magic.phaseRef.current === 'refine'))
         && brushCursorRef.current
       ) {
+        moveCursor(e.clientX, e.clientY);
         brushCursorRef.current.style.display = 'block';
       }
     };

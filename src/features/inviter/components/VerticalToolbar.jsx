@@ -1,5 +1,6 @@
 import React from 'react';
 import GlassSurface from '../../../components/ui/GlassSurface.jsx';
+import GlassIconButton from '../../../components/ui/GlassIconButton.jsx';
 import SolidIconButton from '../../../components/ui/SolidIconButton.jsx';
 import ToolbarToolButton from '../../editor/components/ToolbarToolButton.jsx';
 
@@ -60,7 +61,8 @@ export default function VerticalToolbar({
         );
       })}
 
-      <SolidIconButton
+      <GlassIconButton
+        contained={false}
         icon="chevron"
         label="Toggle toolbar"
         className="s6-tools-chevron"

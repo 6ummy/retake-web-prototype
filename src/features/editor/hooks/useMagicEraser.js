@@ -293,7 +293,7 @@ export function useMagicEraser({
     renderMask(mask);
     if (canvasRef.current) canvasRef.current.style.cursor = 'none';
     syncCursor();
-    if (brushCursorRef.current) brushCursorRef.current.style.display = 'block';
+    if (brushCursorRef.current) brushCursorRef.current.style.display = 'none';
   }, [brushCursorRef, canvasRef, detectMask, magicDetecting, renderLasso, renderMask, reset, showToast, syncCursor]);
 
   const apply = useCallback(() => {
