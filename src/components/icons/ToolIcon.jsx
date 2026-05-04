@@ -88,6 +88,33 @@ export default function ToolIcon({ type }) {
         </svg>
       );
       break;
+    case 'flash':
+      icon = (
+        <svg {...iconProps} fill="currentColor" stroke="none">
+          <path d="M13.15 2.75 5.35 13h5.25l-.9 8.25 8.95-11.35H13.2l-.05-7.15Z" />
+        </svg>
+      );
+      break;
+    case 'timer':
+      icon = (
+        <svg {...iconProps}>
+          <circle cx="12" cy="13" r="6.75" />
+          <path d="M12 10.25v3l2.1 1.3" />
+          <path d="M9.25 3.75h5.5" />
+          <path d="M12 3.75V6" />
+        </svg>
+      );
+      break;
+    case 'flipCamera':
+      icon = (
+        <svg {...iconProps}>
+          <path d="M4.25 6.25v4h4" />
+          <path d="M19.75 17.75v-4h-4" />
+          <path d="M18.1 9.1A6.85 6.85 0 0 0 7.2 6.65l-2.95 3.6" />
+          <path d="M5.9 14.9a6.85 6.85 0 0 0 10.9 2.45l2.95-3.6" />
+        </svg>
+      );
+      break;
     case 'close':
       icon = (
         <svg {...iconProps}>
