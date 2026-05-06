@@ -5,3 +5,4 @@ archive/
 dist/
 public/retake-local-ca.crt
 public/retake-local-ca.cer
+.vercel
