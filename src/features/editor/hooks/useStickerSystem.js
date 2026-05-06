@@ -256,7 +256,16 @@ export function useStickerSystem({
     if (host && overlay && overlay.parentNode !== host) {
       host.appendChild(overlay);
     }
+    if (host) {
+      placedStickersRef.current.forEach(item => {
+        if (item.el?.parentNode !== host) host.appendChild(item.el);
+      });
+    }
   }, [overlayParentRef]);
+
+  const getPlacedItemHost = useCallback(() => (
+    overlayParentRef?.current || stickerOverlayRef.current
+  ), [overlayParentRef]);
 
   // ── Transform ──
   const applyStickerTransform = useCallback((stk) => {
@@ -275,11 +284,10 @@ export function useStickerSystem({
         stk,
       ];
     }
-    if (stickerOverlayRef.current && stk.el.parentNode === stickerOverlayRef.current) {
-      stickerOverlayRef.current.appendChild(stk.el);
-    }
+    const host = getPlacedItemHost();
+    if (host) host.appendChild(stk.el);
     onItemTouched?.(stk.layerId);
-  }, [onItemTouched]);
+  }, [getPlacedItemHost, onItemTouched]);
 
   // ── Selection ──
   const deselectAllStickers = useCallback(() => {
@@ -392,6 +400,14 @@ export function useStickerSystem({
       setTimeout(() => removeSticker(stk), 230);
     }
 
+    const stopFramePointerGesture = e => {
+      e.stopPropagation();
+    };
+    el.addEventListener('pointerdown', stopFramePointerGesture);
+    el.addEventListener('pointermove', stopFramePointerGesture);
+    el.addEventListener('pointerup', stopFramePointerGesture);
+    el.addEventListener('pointercancel', stopFramePointerGesture);
+
     el.addEventListener('mousedown', e => {
       e.stopPropagation(); e.preventDefault();
       selectSticker(stk);
@@ -490,14 +506,12 @@ export function useStickerSystem({
     el.style.width     = displayW + 'px';
     el.style.transform = 'scale(1) rotate(0deg)';
 
-    if (stickerOverlayRef.current) {
-      stickerOverlayRef.current.appendChild(el);
-      stickerOverlayRef.current.classList.add('stk-active');
-    }
+    getPlacedItemHost()?.appendChild(el);
+    stickerOverlayRef.current?.classList.add('stk-active');
     selectSticker(stk);
     el.addEventListener('click', ev => { ev.stopPropagation(); selectSticker(stk); });
     setupStickerDrag(stk);
-  }, [ctxRef, selectSticker, setupStickerDrag, onItemPlaced]);
+  }, [ctxRef, getPlacedItemHost, selectSticker, setupStickerDrag, onItemPlaced]);
 
   const placePhoto = useCallback((image, options = {}) => {
     if (!image) return;
@@ -548,14 +562,12 @@ export function useStickerSystem({
     el.style.height = displayH + 'px';
     el.style.transform = 'scale(1) rotate(0deg)';
 
-    if (stickerOverlayRef.current) {
-      stickerOverlayRef.current.appendChild(el);
-      stickerOverlayRef.current.classList.add('stk-active');
-    }
+    getPlacedItemHost()?.appendChild(el);
+    stickerOverlayRef.current?.classList.add('stk-active');
     selectSticker(stk);
     el.addEventListener('click', ev => { ev.stopPropagation(); selectSticker(stk); });
     setupStickerDrag(stk);
-  }, [ctxRef, selectSticker, setupStickerDrag, onItemPlaced, onItemRemoved]);
+  }, [ctxRef, getPlacedItemHost, selectSticker, setupStickerDrag, onItemPlaced, onItemRemoved]);
 
   // ── Place text ──
   const placeText = useCallback((text, font, size, color, align, wrapWidth = 280, opacity = 1) => {
@@ -600,14 +612,12 @@ export function useStickerSystem({
     el.style.top   = y + 'px';
     el.style.width = bw + 'px';
 
-    if (stickerOverlayRef.current) {
-      stickerOverlayRef.current.appendChild(el);
-      stickerOverlayRef.current.classList.add('stk-active');
-    }
+    getPlacedItemHost()?.appendChild(el);
+    stickerOverlayRef.current?.classList.add('stk-active');
     selectSticker(stk);
     el.addEventListener('click', ev => { ev.stopPropagation(); selectSticker(stk); });
     setupStickerDrag(stk);
-  }, [ctxRef, selectSticker, setupStickerDrag, onItemPlaced]);
+  }, [ctxRef, getPlacedItemHost, selectSticker, setupStickerDrag, onItemPlaced]);
 
   // ── Canvas commit / draw ──
   const commitStickersToCanvas = useCallback(async () => {

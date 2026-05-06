@@ -281,7 +281,11 @@ body.inviter-mode #editCanvas {
 body.inviter-mode #editCanvas:not(.no-tool) {
   z-index: calc(var(--z-frame-scrim) - 1);
 }
-body.inviter-mode #editCanvas.no-tool { cursor: default; pointer-events: none; }
+body.inviter-mode #editCanvas.no-tool {
+  z-index: var(--z-frame-bg);
+  cursor: default;
+  pointer-events: none;
+}
 
 body.inviter-mode .creative-layer-canvas {
   position: absolute;
@@ -292,6 +296,12 @@ body.inviter-mode .creative-layer-canvas {
 }
 
 body.inviter-mode [data-flow-state^="step3"] .creative-layer-canvas {
+  display: none;
+}
+
+body.inviter-mode [data-flow-state^="step3"] .placed-sticker,
+body.inviter-mode [data-flow-state^="step3"] .placed-photo,
+body.inviter-mode [data-flow-state^="step3"] .placed-text {
   display: none;
 }
 
@@ -1907,7 +1917,6 @@ body.inviter-mode .new-sticker-screen.ns-visible { transform: translateY(0); opa
 body.inviter-mode #stickerOverlay {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
-  z-index: var(--z-editor-chrome);
   pointer-events: none;
 }
 body.inviter-mode #stickerOverlay.stk-active { pointer-events: none; }

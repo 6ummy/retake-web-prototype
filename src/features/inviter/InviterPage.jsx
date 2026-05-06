@@ -694,7 +694,6 @@ export default function InviterPage() {
     await layerStack.renderFrameLayersToContext(galleryCtx, {
       width,
       height,
-      includeItems: false,
     });
   }, [getCanvasSize, layerStack]);
 
@@ -1783,9 +1782,10 @@ export default function InviterPage() {
 
   const handleS2GalleryPointerDown = useCallback((e) => {
     const target = e.target;
-    if (!target.closest?.('.placed-sticker, .placed-text, .placed-photo')) {
-      stickerSys.deselectAllStickers?.();
+    if (target.closest?.('.placed-sticker, .placed-text, .placed-photo')) {
+      return;
     }
+    stickerSys.deselectAllStickers?.();
     if (!canHandleS2GalleryGesture()) return;
     e.preventDefault();
     if (!s2GalleryGestureActiveRef.current && s2GalleryTransform.getActivePointerCount() > 0) {
