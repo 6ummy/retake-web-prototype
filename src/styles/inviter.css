@@ -56,6 +56,23 @@ body.inviter-mode #frameContainer {
   box-shadow: none;
 }
 
+body.inviter-mode #frameContainer.s2-gallery-adjusting {
+  cursor: grab;
+}
+
+body.inviter-mode #frameContainer.s2-gallery-adjusting:active {
+  cursor: grabbing;
+}
+
+body.inviter-mode #s2GalleryCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  z-index: var(--z-inviter-media-gallery);
+  pointer-events: none;
+}
+
 #checkerBg {
   position: absolute; left: 0; top: 0;
   width: 100%; height: 100%;
@@ -75,7 +92,7 @@ body.inviter-mode #frameContainer {
   position: absolute;
   inset: 0;
   z-index: var(--z-live-media);
-  background: var(--color-ink);
+  background: transparent;
   overflow: hidden;
   touch-action: none;
   user-select: none;
@@ -144,6 +161,24 @@ body.inviter-mode #frameContainer {
   text-shadow: 0 4px 28px rgba(0,0,0,0.34);
 }
 
+.step3-screen-flash {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-recording-indicator);
+  pointer-events: none;
+  background: var(--color-white);
+  opacity: 0;
+  transition: opacity var(--motion-medium);
+}
+
+.step3-screen-flash.visible {
+  opacity: 0.78;
+}
+
+.step3-screen-flash.visible.recording {
+  opacity: 0.34;
+}
+
 .step3-camera-controls {
   position: absolute;
   left: 50%;
@@ -189,51 +224,74 @@ body.inviter-mode #frameContainer {
   line-height: 1;
 }
 
-.step3-camera-zoom {
+.step3-zoom-control {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--canvas-chrome-inset) + 64px);
+  transform: translateX(-50%) translateY(10px);
+  z-index: var(--z-editor-chrome);
   display: flex;
   align-items: center;
-  gap: 2px;
-  height: 42px;
-  padding: 3px;
-  border-radius: var(--radius-pill);
-  background: var(--glass-control-bg);
+  justify-content: center;
+  gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-medium), transform var(--motion-enter);
 }
 
-.step3-camera-zoom-btn {
-  width: 34px;
-  height: 34px;
+.step3-zoom-control.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+.step3-zoom-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 9px;
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--glass-icon-color);
+  color: rgba(255,255,255,0.88);
   font-family: var(--font-display);
   font-size: var(--text-xs);
+  line-height: 1;
   cursor: pointer;
-  transition: background var(--motion-fast), color var(--motion-fast), transform var(--motion-fast);
+  transition: background var(--motion-fast), color var(--motion-fast), opacity var(--motion-fast), transform var(--motion-fast);
 }
 
-.step3-camera-zoom-btn.active {
-  background: var(--color-white);
-  color: var(--color-ink);
+.step3-zoom-option.active {
+  color: var(--glass-icon-color);
 }
 
-.step3-camera-zoom-btn:active {
+.step3-zoom-option:active {
   transform: scale(0.92);
 }
 
 body.inviter-mode #editCanvas {
   position: absolute; inset: 0;
   width: 100% !important; height: 100% !important;
-  z-index: var(--z-edit-canvas);
-  cursor: none;
+  z-index: var(--z-inviter-media-doodle-pen);
+  cursor: crosshair;
   touch-action: none;
+}
+body.inviter-mode #editCanvas:not(.no-tool) {
+  z-index: calc(var(--z-frame-scrim) - 1);
 }
 body.inviter-mode #editCanvas.no-tool { cursor: default; pointer-events: none; }
 
-#brushCursor {
+body.inviter-mode .creative-layer-canvas {
   position: absolute;
-  pointer-events: none; z-index: var(--z-recording-indicator);
-  transform: translate(-50%, -50%);
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: none;
+}
+
+body.inviter-mode [data-flow-state^="step3"] .creative-layer-canvas {
   display: none;
 }
 
@@ -1006,6 +1064,41 @@ input[type="range"]::-webkit-slider-thumb {
     rgba(255,255,255,0.15) var(--fill,100%));
 }
 
+#tmPenBar.tm-pen-panel {
+  height: auto;
+  min-height: 0;
+  border-radius: 24px;
+  padding: 12px 18px 16px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  transform: translateY(24px);
+}
+
+#tmPenBar.tm-pen-panel.tm-in {
+  transform: translateY(0);
+}
+
+#tmPenBar.tm-pen-panel .tm-divider {
+  display: block;
+  margin: 0;
+}
+
+#doodleOpacitySlider {
+  background: linear-gradient(to right,
+    rgba(255,255,255,0.82) var(--fill,100%),
+    rgba(255,255,255,0.15) var(--fill,100%));
+}
+
+@media (max-width: 420px) {
+  #tmPenBar.tm-pen-panel {
+    left: 12px;
+    right: 12px;
+    min-height: 0;
+    padding: 12px 18px 16px;
+  }
+}
+
 /* ── Toast ── */
 body.inviter-mode .s6-toast {
   position: absolute; bottom: 14dvh; left: 50%;
@@ -1248,6 +1341,7 @@ body.inviter-mode .s6-toast.visible { opacity: 1; transform: translateX(-50%) tr
 .btn:active { opacity: 0.78; transform: scale(0.97); }
 .btn-primary   { background: var(--color-ink); color: var(--color-brand-yellow); }
 .btn-secondary { background: var(--surface-brand-control); color: var(--color-ink); }
+.btn-tertiary  { background: var(--surface-brand-control-subtle); color: var(--surface-brand-muted-strong); }
 
 
 /* ── Confirm dialog ── */
@@ -1294,14 +1388,25 @@ body.inviter-mode .s6-toast.visible { opacity: 1; transform: translateX(-50%) tr
   line-height: 1.6;
   margin-top: -8px;
 }
-/* ── Intro card: photo pick CTA fills full width ── */
-.btn-photo {
-  display: flex; align-items: center; justify-content: center; gap: 8px;
+/* ── Intro card actions ── */
+.intro-actions {
+  flex-direction: column;
+  gap: 8px;
 }
-.btn-blank {
-  font-size: 15px;
-  padding: 12px 0;
-  opacity: 0.7;
+
+.intro-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 52px;
+  padding: 14px 18px;
+  line-height: 1;
+}
+
+.intro-action-icon {
+  flex: 0 0 auto;
 }
 
 /* ════════════════════════════════════════════
@@ -1802,16 +1907,25 @@ body.inviter-mode .new-sticker-screen.ns-visible { transform: translateY(0); opa
 body.inviter-mode #stickerOverlay {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
-  pointer-events: none; z-index: var(--z-stickers);
+  z-index: var(--z-editor-chrome);
+  pointer-events: none;
 }
-body.inviter-mode #stickerOverlay.stk-active { pointer-events: auto; }
+body.inviter-mode #stickerOverlay.stk-active { pointer-events: none; }
 
 /* Placed sticker */
-.placed-sticker {
+.placed-sticker,
+.placed-photo {
   position: absolute; cursor: grab; touch-action: none; user-select: none;
+  pointer-events: auto;
   transform-origin: center center;
 }
 .placed-sticker img { width: 100%; display: block; pointer-events: none; }
+.placed-photo img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
 .placed-sticker.stk-selected { outline: 2px dashed rgba(255,255,255,0.55); border-radius: 6px; outline-offset: 4px; }
 
 /* Trash bin — shown while dragging a sticker */
@@ -1932,11 +2046,13 @@ body.inviter-mode #stickerOverlay.stk-active { pointer-events: auto; }
 /* Placed text element — same drag system as stickers */
 .placed-text {
   position: absolute; cursor: grab; touch-action: none; user-select: none;
+  pointer-events: auto;
   transform-origin: center center;
   white-space: pre-wrap; word-break: break-word; line-height: 1.22;
   padding: 2px 6px;
 }
-.placed-text.stk-selected { outline: 2px dashed rgba(255,255,255,0.55); border-radius: 6px; outline-offset: 4px; }
+.placed-text.stk-selected,
+.placed-photo.stk-selected { outline: 2px dashed rgba(255,255,255,0.55); border-radius: 6px; outline-offset: 4px; }
 
 /* Shared vertical size rail */
 .size-slider-rail {

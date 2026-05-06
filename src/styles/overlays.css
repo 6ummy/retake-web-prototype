@@ -9,7 +9,7 @@
 .scrim {
   background: rgba(0, 0, 0, 0.4);
   transition: opacity 0.3s ease;
-  z-index: var(--z-scrim);
+  z-index: var(--z-overlay-scrim);
 }
 
 .confirm-scrim {

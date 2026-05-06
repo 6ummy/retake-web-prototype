@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
 
-const ALL_TOOL_IDS = ['text', 'stickers', 'doodle', 'eraser', 'download'];
+const ALL_TOOL_IDS = ['text', 'stickers', 'doodle', 'magicPen', 'download'];
 
 export function useToolbarState() {
   const [toolsCollapsed, setToolsCollapsed] = useState(false);

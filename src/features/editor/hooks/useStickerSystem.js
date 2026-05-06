@@ -1,6 +1,12 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { TXT_FONTS } from './useTextTool';
 import { sqDist3, kMeans, keepLargestCC, fillHoles, morphClose, polyContains } from '../utils/imageProcessing';
+import {
+  beginTransformGesture,
+  pointFromClientEvent,
+  pointsFromTouchList,
+  updateTransformGesture,
+} from '../utils/transformGesture.js';
 
 // ── Emoji categories ──
 export const EMOJI_CATS = [
@@ -61,6 +67,70 @@ function wrapCanvasText(ctx, text, maxWidth) {
   });
 }
 
+function stickerToTransform(stk) {
+  return {
+    offsetX: stk.x,
+    offsetY: stk.y,
+    scale: stk.scale,
+    rotation: stk.rotation,
+  };
+}
+
+function applyTransformToSticker(stk, transform) {
+  stk.x = transform.offsetX;
+  stk.y = transform.offsetY;
+  stk.scale = transform.scale;
+  stk.rotation = transform.rotation;
+}
+
+export function loadItemImage(item) {
+  if (item.image?.complete) return Promise.resolve(item.image);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = item.src;
+  });
+}
+
+export function drawTextItemToContext(ctx, item) {
+  const eff  = item.fontSize * item.scale;
+  const maxW = (item.wrapWidth || item.baseW) * item.scale;
+  const cx   = item.x + item.baseW / 2;
+  const cy   = item.y + item.baseH / 2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(item.rotation * Math.PI / 180);
+  ctx.font         = `${item.fontStyle} ${item.fontWeight} ${eff}px ${item.fontFamily}`;
+  ctx.fillStyle    = item.color;
+  ctx.globalAlpha  = item.opacity ?? 1;
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor  = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur   = 16;
+  ctx.textAlign    = item.textAlign;
+  const lines  = wrapCanvasText(ctx, item.text, maxW);
+  const lineH  = eff * 1.22;
+  const alignX = item.textAlign === 'left'  ? -maxW / 2 :
+                 item.textAlign === 'right' ?  maxW / 2 : 0;
+  lines.forEach((line, i) => {
+    ctx.fillText(line, alignX, (i - (lines.length - 1) / 2) * lineH);
+  });
+  ctx.restore();
+}
+
+export function drawImageItemToContext(ctx, item, img) {
+  if (!img) return;
+  const effW = item.baseW * item.scale;
+  const effH = (item.baseH || item.baseW) * item.scale;
+  const cx = item.x + item.baseW / 2;
+  const cy = item.y + (item.baseH || item.baseW) / 2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(item.rotation * Math.PI / 180);
+  ctx.drawImage(img, -effW / 2, -effH / 2, effW, effH);
+  ctx.restore();
+}
+
 // ── MediaPipe lazy loader ──
 let _nsMpSeg = null;
 let _nsMpErr = false;
@@ -101,6 +171,11 @@ export function useStickerSystem({
   showToast,
   onItemDragStart,
   onItemDragEnd,
+  overlayParentRef,
+  onItemPlaced,
+  onItemTouched,
+  onItemRemoved,
+  onItemsCleared,
 }) {
   // ── DOM refs (sticker panel) ──
   const stickerOverlayRef = useRef(null);
@@ -175,12 +250,36 @@ export function useStickerSystem({
     onItemDragEndRef.current = onItemDragEnd;
   }, [onItemDragStart, onItemDragEnd]);
 
+  useEffect(() => {
+    const host = overlayParentRef?.current;
+    const overlay = stickerOverlayRef.current;
+    if (host && overlay && overlay.parentNode !== host) {
+      host.appendChild(overlay);
+    }
+  }, [overlayParentRef]);
+
   // ── Transform ──
   const applyStickerTransform = useCallback((stk) => {
     stk.el.style.left      = stk.x + 'px';
     stk.el.style.top       = stk.y + 'px';
     stk.el.style.transform = `scale(${stk.scale}) rotate(${stk.rotation}deg)`;
   }, []);
+
+  const bringStickerToFront = useCallback((stk) => {
+    const current = placedStickersRef.current;
+    const index = current.indexOf(stk);
+    if (index >= 0 && index !== current.length - 1) {
+      placedStickersRef.current = [
+        ...current.slice(0, index),
+        ...current.slice(index + 1),
+        stk,
+      ];
+    }
+    if (stickerOverlayRef.current && stk.el.parentNode === stickerOverlayRef.current) {
+      stickerOverlayRef.current.appendChild(stk.el);
+    }
+    onItemTouched?.(stk.layerId);
+  }, [onItemTouched]);
 
   // ── Selection ──
   const deselectAllStickers = useCallback(() => {
@@ -189,32 +288,30 @@ export function useStickerSystem({
   }, []);
 
   const selectSticker = useCallback((stk) => {
+    bringStickerToFront(stk);
     deselectAllStickers();
     selectedStickerRef.current = stk;
     stk.el.classList.add('stk-selected');
-  }, [deselectAllStickers]);
+  }, [bringStickerToFront, deselectAllStickers]);
 
   // ── Remove ──
   const removeSticker = useCallback((stk) => {
     stk.el.remove();
+    onItemRemoved?.(stk.layerId);
     placedStickersRef.current = placedStickersRef.current.filter(s => s !== stk);
     if (selectedStickerRef.current === stk) selectedStickerRef.current = null;
     if (placedStickersRef.current.length === 0 && stickerOverlayRef.current) {
       stickerOverlayRef.current.classList.remove('stk-active');
     }
-  }, []);
+  }, [onItemRemoved]);
 
   // ── Drag / pinch ──
   const setupStickerDrag = useCallback((stk) => {
     const el = stk.el;
-    let t1x=0, t1y=0, t2x=0, t2y=0;
-    let startX=0, startY=0, startSX=0, startSY=0;
-    let startMidX=0, startMidY=0;
-    let startDist=0, startScale=1, startAngle=0, startRot=0;
-    let dragging=false, pinching=false;
+    let dragging=false;
+    let gesture=null;
+    let gestureMode=null;
     let interactionActive=false;
-    function dist(ax,ay,bx,by){ return Math.sqrt((bx-ax)**2+(by-ay)**2); }
-    function angle(ax,ay,bx,by){ return Math.atan2(by-ay, bx-ax); }
     function beginInteraction() {
       if (interactionActive) return;
       interactionActive = true;
@@ -224,6 +321,36 @@ export function useStickerSystem({
       if (!interactionActive) return;
       interactionActive = false;
       onItemDragEndRef.current?.();
+    }
+    function getGestureScaleFactor() {
+      const s = getScreenScale();
+      return { x: 1 / s, y: 1 / s };
+    }
+    function beginGesture(points, target) {
+      gesture = beginTransformGesture({
+        points,
+        target,
+        transform: stickerToTransform(stk),
+        scaleFactor: getGestureScaleFactor(),
+      });
+      gestureMode = points.length >= 2 ? 'two-pointer' : points.length === 1 ? 'single-pointer' : null;
+      dragging = gestureMode === 'single-pointer';
+      el.classList.toggle('stk-dragging', dragging);
+      if (dragging) showBin();
+      else hideBin();
+    }
+    function applyGesture(points) {
+      const result = updateTransformGesture(gesture, points, {
+        allowSinglePointer: true,
+        minScale: 0.2,
+        maxScale: Infinity,
+        moveTolerance: 0.5,
+      });
+      if (!result.moved || !result.transform) return false;
+      applyTransformToSticker(stk, result.transform);
+      applyStickerTransform(stk);
+      if (dragging) updateBinHighlight();
+      return true;
     }
 
     function checkOverTrash() {
@@ -268,27 +395,24 @@ export function useStickerSystem({
     el.addEventListener('mousedown', e => {
       e.stopPropagation(); e.preventDefault();
       selectSticker(stk);
-      dragging = true;
       beginInteraction();
-      el.classList.add('stk-dragging');
-      startX = e.clientX; startY = e.clientY;
-      startSX = stk.x; startSY = stk.y;
-      showBin();
+      beginGesture([pointFromClientEvent(e)], el);
       const onMove = e => {
-        if (!dragging) return;
-        const s = getScreenScale();
-        stk.x = startSX + (e.clientX - startX) / s;
-        stk.y = startSY + (e.clientY - startY) / s;
-        applyStickerTransform(stk);
-        updateBinHighlight();
+        if (!gesture) return;
+        applyGesture([pointFromClientEvent(e)]);
       };
       const onUp = () => {
         dragging = false;
+        gesture = null;
+        gestureMode = null;
         el.classList.remove('stk-dragging');
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         if (checkOverTrash()) doDeleteIntoTrash();
-        else hideBin();
+        else {
+          hideBin();
+          onItemTouched?.(stk.layerId);
+        }
         endInteraction();
       };
       document.addEventListener('mousemove', onMove);
@@ -298,61 +422,43 @@ export function useStickerSystem({
     el.addEventListener('touchstart', e => {
       e.stopPropagation(); e.preventDefault();
       selectSticker(stk);
-      if (e.touches.length === 1) {
-        dragging=true; pinching=false;
-        beginInteraction();
-        el.classList.add('stk-dragging');
-        t1x=e.touches[0].clientX; t1y=e.touches[0].clientY;
-        startSX=stk.x; startSY=stk.y;
-        showBin();
-      } else if (e.touches.length === 2) {
-        dragging=false; pinching=true;
-        beginInteraction();
-        el.classList.remove('stk-dragging');
-        hideBin();
-        const a=e.touches[0], b=e.touches[1];
-        t1x=a.clientX; t1y=a.clientY; t2x=b.clientX; t2y=b.clientY;
-        startMidX=(t1x+t2x)/2; startMidY=(t1y+t2y)/2;
-        startDist=dist(t1x,t1y,t2x,t2y);
-        startScale=stk.scale; startAngle=angle(t1x,t1y,t2x,t2y); startRot=stk.rotation;
-        startSX=stk.x; startSY=stk.y;
-      }
+      beginInteraction();
+      beginGesture(pointsFromTouchList(e.touches), el);
     }, { passive:false });
 
     el.addEventListener('touchmove', e => {
       e.stopPropagation(); e.preventDefault();
-      if (dragging && e.touches.length===1) {
-        const s = getScreenScale();
-        stk.x = startSX+(e.touches[0].clientX-t1x)/s;
-        stk.y = startSY+(e.touches[0].clientY-t1y)/s;
-        updateBinHighlight();
-      } else if (pinching && e.touches.length===2) {
-        const s = getScreenScale();
-        const a=e.touches[0], b=e.touches[1];
-        const d=dist(a.clientX,a.clientY,b.clientX,b.clientY);
-        const midX=(a.clientX+b.clientX)/2, midY=(a.clientY+b.clientY)/2;
-        stk.scale=Math.max(0.2, startScale*(d/startDist));
-        stk.rotation=startRot+(angle(a.clientX,a.clientY,b.clientX,b.clientY)-startAngle)*(180/Math.PI);
-        stk.x=startSX+(midX-startMidX)/s;
-        stk.y=startSY+(midY-startMidY)/s;
+      const points = pointsFromTouchList(e.touches);
+      const nextMode = points.length >= 2 ? 'two-pointer' : points.length === 1 ? 'single-pointer' : null;
+      if (!gesture || nextMode !== gestureMode) {
+        beginGesture(points, el);
+        return;
       }
-      applyStickerTransform(stk);
+      applyGesture(points);
     }, { passive:false });
 
     function finishTouchInteraction(e) {
-      if (e.touches.length < 2) pinching=false;
+      if (e.touches.length > 0) {
+        beginGesture(pointsFromTouchList(e.touches), el);
+        return;
+      }
       if (e.touches.length === 0) {
         dragging=false;
+        gesture=null;
+        gestureMode=null;
         el.classList.remove('stk-dragging');
         if (checkOverTrash()) doDeleteIntoTrash();
-        else hideBin();
+        else {
+          hideBin();
+          onItemTouched?.(stk.layerId);
+        }
         endInteraction();
       }
     }
 
     el.addEventListener('touchend', finishTouchInteraction, { passive:true });
     el.addEventListener('touchcancel', finishTouchInteraction, { passive:true });
-  }, [selectSticker, applyStickerTransform, removeSticker]);
+  }, [selectSticker, applyStickerTransform, removeSticker, onItemTouched]);
 
   // ── Place sticker (with smart sizing) ──
   const placeSticker = useCallback((src, naturalW, naturalH) => {
@@ -378,6 +484,7 @@ export function useStickerSystem({
 
     const stk = { id: Date.now(), el, src, x, y, scale: 1, rotation: 0, baseW: displayW, baseH: displayH };
     placedStickersRef.current.push(stk);
+    onItemPlaced?.(stk, 'sticker');
     el.style.left      = x + 'px';
     el.style.top       = y + 'px';
     el.style.width     = displayW + 'px';
@@ -390,7 +497,65 @@ export function useStickerSystem({
     selectSticker(stk);
     el.addEventListener('click', ev => { ev.stopPropagation(); selectSticker(stk); });
     setupStickerDrag(stk);
-  }, [ctxRef, selectSticker, setupStickerDrag]);
+  }, [ctxRef, selectSticker, setupStickerDrag, onItemPlaced]);
+
+  const placePhoto = useCallback((image, options = {}) => {
+    if (!image) return;
+    placedStickersRef.current
+      .filter(item => item.type === 'photo')
+      .forEach(item => {
+        onItemRemoved?.(item.layerId);
+        item.el.remove();
+      });
+    if (selectedStickerRef.current?.type === 'photo') selectedStickerRef.current = null;
+    placedStickersRef.current = placedStickersRef.current.filter(item => item.type !== 'photo');
+    const canvas = ctxRef.current?.canvas;
+    const canvasW = canvas?.width || 414;
+    const canvasH = canvas?.height || 736;
+    const naturalW = image.naturalWidth || image.width || canvasW;
+    const naturalH = image.naturalHeight || image.height || canvasH;
+    const fitScale = canvasW / naturalW;
+    const displayW = Math.round(naturalW * fitScale);
+    const displayH = Math.round(naturalH * fitScale);
+    const x = Math.round((canvasW - displayW) / 2);
+    const y = Math.round((canvasH - displayH) / 2);
+    const src = options.src || image.src;
+
+    const el = document.createElement('div');
+    el.className = 'placed-photo';
+    const img = document.createElement('img');
+    img.src = src;
+    el.appendChild(img);
+
+    const stk = {
+      id: Date.now(),
+      type: 'photo',
+      el,
+      src,
+      image,
+      x,
+      y,
+      scale: 1,
+      rotation: 0,
+      baseW: displayW,
+      baseH: displayH,
+    };
+    placedStickersRef.current.push(stk);
+    onItemPlaced?.(stk, 'photo');
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    el.style.width = displayW + 'px';
+    el.style.height = displayH + 'px';
+    el.style.transform = 'scale(1) rotate(0deg)';
+
+    if (stickerOverlayRef.current) {
+      stickerOverlayRef.current.appendChild(el);
+      stickerOverlayRef.current.classList.add('stk-active');
+    }
+    selectSticker(stk);
+    el.addEventListener('click', ev => { ev.stopPropagation(); selectSticker(stk); });
+    setupStickerDrag(stk);
+  }, [ctxRef, selectSticker, setupStickerDrag, onItemPlaced, onItemRemoved]);
 
   // ── Place text ──
   const placeText = useCallback((text, font, size, color, align, wrapWidth = 280, opacity = 1) => {
@@ -430,6 +595,7 @@ export function useStickerSystem({
       baseW: bw, baseH: bh,
     };
     placedStickersRef.current.push(stk);
+    onItemPlaced?.(stk, 'text');
     el.style.left  = x + 'px';
     el.style.top   = y + 'px';
     el.style.width = bw + 'px';
@@ -441,49 +607,21 @@ export function useStickerSystem({
     selectSticker(stk);
     el.addEventListener('click', ev => { ev.stopPropagation(); selectSticker(stk); });
     setupStickerDrag(stk);
-  }, [ctxRef, selectSticker, setupStickerDrag]);
+  }, [ctxRef, selectSticker, setupStickerDrag, onItemPlaced]);
 
   // ── Canvas commit / draw ──
-  const commitStickersToCanvas = useCallback(() => {
+  const commitStickersToCanvas = useCallback(async () => {
     const stickers = placedStickersRef.current;
     if (stickers.length === 0) return;
     const ctx = ctxRef.current;
-    stickers.forEach(stk => {
-      ctx.save();
+    for (const stk of stickers) {
       if (stk.type === 'text') {
-        const eff  = stk.fontSize * stk.scale;
-        const maxW = (stk.wrapWidth || stk.baseW) * stk.scale;
-        const cx   = stk.x + stk.baseW / 2;
-        const cy   = stk.y + stk.baseH / 2;
-        ctx.translate(cx, cy);
-        ctx.rotate(stk.rotation * Math.PI / 180);
-        ctx.font         = `${stk.fontStyle} ${stk.fontWeight} ${eff}px ${stk.fontFamily}`;
-        ctx.fillStyle    = stk.color;
-        ctx.globalAlpha  = stk.opacity ?? 1;
-        ctx.textBaseline = 'middle';
-        ctx.shadowColor  = 'rgba(0,0,0,0.5)';
-        ctx.shadowBlur   = 16;
-        ctx.textAlign    = stk.textAlign;
-        const lines  = wrapCanvasText(ctx, stk.text, maxW);
-        const lineH  = eff * 1.22;
-        const alignX = stk.textAlign === 'left'  ? -maxW / 2 :
-                       stk.textAlign === 'right' ?  maxW / 2 : 0;
-        lines.forEach((line, i) => {
-          ctx.fillText(line, alignX, (i - (lines.length - 1) / 2) * lineH);
-        });
+        drawTextItemToContext(ctx, stk);
       } else {
-        const img = new Image();
-        img.src = stk.src;
-        const eff = stk.baseW * stk.scale;
-        const cx  = stk.x + stk.baseW / 2;
-        const cy  = stk.y + (stk.baseH || stk.baseW) / 2;
-        ctx.translate(cx, cy);
-        ctx.rotate(stk.rotation * Math.PI / 180);
-        ctx.drawImage(img, -eff/2, -(eff * (stk.baseH || stk.baseW) / stk.baseW)/2,
-          eff, eff * (stk.baseH || stk.baseW) / stk.baseW);
+        const img = await loadItemImage(stk);
+        drawImageItemToContext(ctx, stk, img);
       }
-      ctx.restore();
-    });
+    }
     stickers.forEach(s => s.el.remove());
     placedStickersRef.current = [];
     selectedStickerRef.current = null;
@@ -493,46 +631,10 @@ export function useStickerSystem({
   const drawStickersToContext = useCallback(async (offCtx) => {
     for (const stk of placedStickersRef.current) {
       if (stk.type === 'text') {
-        offCtx.save();
-        const eff  = stk.fontSize * stk.scale;
-        const maxW = (stk.wrapWidth || stk.baseW) * stk.scale;
-        const cx   = stk.x + stk.baseW / 2;
-        const cy   = stk.y + stk.baseH / 2;
-        offCtx.translate(cx, cy);
-        offCtx.rotate(stk.rotation * Math.PI / 180);
-        offCtx.font         = `${stk.fontStyle} ${stk.fontWeight} ${eff}px ${stk.fontFamily}`;
-        offCtx.fillStyle    = stk.color;
-        offCtx.globalAlpha  = stk.opacity ?? 1;
-        offCtx.textBaseline = 'middle';
-        offCtx.shadowColor  = 'rgba(0,0,0,0.5)';
-        offCtx.shadowBlur   = 16;
-        offCtx.textAlign    = stk.textAlign;
-        const lines  = wrapCanvasText(offCtx, stk.text, maxW);
-        const lineH  = eff * 1.22;
-        const alignX = stk.textAlign === 'left'  ? -maxW / 2 :
-                       stk.textAlign === 'right' ?  maxW / 2 : 0;
-        lines.forEach((line, i) => {
-          offCtx.fillText(line, alignX, (i - (lines.length - 1) / 2) * lineH);
-        });
-        offCtx.restore();
+        drawTextItemToContext(offCtx, stk);
       } else {
-        await new Promise((resolve) => {
-          const img = new Image();
-          img.onload = () => {
-            const eff  = stk.baseW * stk.scale;
-            const effH = eff * (stk.baseH || stk.baseW) / stk.baseW;
-            const cx   = stk.x + stk.baseW / 2;
-            const cy   = stk.y + (stk.baseH || stk.baseW) / 2;
-            offCtx.save();
-            offCtx.translate(cx, cy);
-            offCtx.rotate(stk.rotation * Math.PI / 180);
-            offCtx.drawImage(img, -eff/2, -effH/2, eff, effH);
-            offCtx.restore();
-            resolve();
-          };
-          img.onerror = resolve;
-          img.src = stk.src;
-        });
+        const img = await loadItemImage(stk);
+        drawImageItemToContext(offCtx, stk, img);
       }
     }
   }, []);
@@ -541,8 +643,9 @@ export function useStickerSystem({
     placedStickersRef.current.forEach(s => s.el.remove());
     placedStickersRef.current = [];
     selectedStickerRef.current = null;
+    onItemsCleared?.();
     if (stickerOverlayRef.current) stickerOverlayRef.current.classList.remove('stk-active');
-  }, []);
+  }, [onItemsCleared]);
 
   // ── NS screen helpers ──
   const nsSetPhaseState = useCallback((phase) => {
@@ -1659,7 +1762,9 @@ export function useStickerSystem({
     nsHandleOpacityInput,
     // Sticker ops
     placeSticker,
+    placePhoto,
     placeText,
+    bringStickerToFront,
     deselectAllStickers,
     commitStickersToCanvas,
     drawStickersToContext,
@@ -1673,6 +1778,9 @@ export function useStickerSystem({
 }
 
 function getScreenScale() {
-  const m = document.querySelector('.frame-container')?.style.transform.match(/scale\(([\d.]+)\)/);
-  return m ? parseFloat(m[1]) : 1;
+  const frame = document.getElementById('frameContainer');
+  const canvas = document.getElementById('editCanvas');
+  const rect = frame?.getBoundingClientRect?.();
+  if (rect?.width && canvas?.width) return rect.width / canvas.width;
+  return 1;
 }

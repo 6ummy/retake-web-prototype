@@ -1,6 +1,14 @@
 import React from 'react';
 import GlassIconButton from '../../../components/ui/GlassIconButton.jsx';
 import ToolIcon from '../../../components/icons/ToolIcon.jsx';
+import OpacitySlider from './OpacitySlider.jsx';
+import {
+  ToolPanelColorButton,
+  ToolPanelColorPicker,
+  ToolPanelRow,
+  ToolPanelSegment,
+  ToolPanelSegmentButton,
+} from './ToolPanelControls.jsx';
 
 const SWATCH_COLORS = [
   { color: '#FFFFFF', label: 'White' },
@@ -11,6 +19,35 @@ const SWATCH_COLORS = [
   { color: '#00C2A8', label: 'Teal' },
 ];
 
+function colorInputValue(color) {
+  return /^#[0-9a-f]{6}$/i.test(color) ? color : '#ffffff';
+}
+
+function PenGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="4" fill="currentColor" />
+    </svg>
+  );
+}
+
+function PencilGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="6" y="1" width="4" height="10" rx="1.5" fill="currentColor" />
+      <polygon points="6,11 10,11 8,15" fill="currentColor" />
+    </svg>
+  );
+}
+
+function MarkerGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="1" y="6" width="14" height="4" rx="2" fill="currentColor" />
+    </svg>
+  );
+}
+
 /**
  * DrawingToolOverlays — the shared tool-mode UI that appears when the user
  * is drawing on the canvas:
@@ -18,13 +55,6 @@ const SWATCH_COLORS = [
  *   • "Done" pill button
  *   • Left size-track panel
  *   • Pen bar (color swatches + pen type buttons)
- *
- * NOTE: The brush cursor SVG is NOT rendered here because it must live inside
- * the #frameContainer div in each page (absolute positioning is relative to it).
- * Render it directly in the page JSX:
- *   <svg id="brushCursor" ref={brushCursorRef}>
- *     <circle id="brushCursorCircle" ref={brushCursorCircleRef} ... />
- *   </svg>
  *
  * InviterPage renders extra eraser-specific UI after this component.
  */
@@ -35,6 +65,8 @@ export default function DrawingToolOverlays({
   tmLeftIn,
   tmPenBarIn,
   doodleColor,
+  doodleMode = 'draw',
+  doodleOpacity = 100,
   penType,
   tmUndoBtnDisabled,
   tmRedoBtnDisabled,
@@ -42,8 +74,13 @@ export default function DrawingToolOverlays({
   onUndo,
   onRedo,
   onSwatchClick,
+  onDoodleModeClick,
+  onColorPickerChange,
+  onDoodleOpacityInput,
   onPenTypeClick,
 }) {
+  const selectedSwatch = SWATCH_COLORS.some(({ color }) => color.toUpperCase() === doodleColor.toUpperCase());
+
   return (
     <>
       {/* ── Undo / redo ── */}
@@ -71,42 +108,78 @@ export default function DrawingToolOverlays({
         <div id="tmSizeHandle" ref={tmSizeHandleRef}></div>
       </div>
 
-      {/* ── Pen bar (color swatches + pen type) ── */}
-      <div id="tmPenBar" className={tmPenBarIn ? 'tm-in' : ''}>
-        <div className="tm-swatches">
-          {SWATCH_COLORS.map(({ color, label }) => (
-            <button
-              key={color}
-              className={`tm-swatch${doodleColor === color ? ' active' : ''}`}
-              data-color={color}
-              style={{ background: color }}
-              aria-label={label}
-              onClick={() => onSwatchClick(color)}
+      {/* ── Pen bar ── */}
+      <div id="tmPenBar" className={`tm-pen-panel${tmPenBarIn ? ' tm-in' : ''}`}>
+        <ToolPanelRow>
+          <ToolPanelSegment ariaLabel="Drawing mode">
+            <ToolPanelSegmentButton
+              active={doodleMode === 'draw'}
+              label="Draw"
+              onClick={() => onDoodleModeClick?.('draw')}
+            >
+              <ToolIcon type="draw" />
+            </ToolPanelSegmentButton>
+            <ToolPanelSegmentButton
+              active={doodleMode === 'erase'}
+              label="Erase"
+              onClick={() => onDoodleModeClick?.('erase')}
+            >
+              <ToolIcon type="eraser" />
+            </ToolPanelSegmentButton>
+          </ToolPanelSegment>
+
+          <div className="tm-divider" />
+
+          <OpacitySlider
+            inline
+            inputId="doodleOpacitySlider"
+            valueClassName="tm-val"
+            value={doodleOpacity}
+            valueLabel={`${doodleOpacity}%`}
+            min={5}
+            max={100}
+            style={{ flex: 1, '--fill': `${doodleOpacity}%` }}
+            onInput={onDoodleOpacityInput}
+            onChange={onDoodleOpacityInput}
+          />
+        </ToolPanelRow>
+
+        <ToolPanelRow>
+          <div className="tool-panel-colors">
+            {SWATCH_COLORS.map(({ color, label }) => (
+              <ToolPanelColorButton
+                key={color}
+                active={doodleColor.toUpperCase() === color.toUpperCase()}
+                color={color}
+                label={label}
+                extraStyle={color === '#1A1A2E' ? {
+                  boxShadow: '0 1px 5px rgba(0,0,0,0.7), inset 0 0 0 1.5px rgba(255,255,255,0.22)',
+                } : undefined}
+                onClick={() => onSwatchClick(color)}
+              />
+            ))}
+            <ToolPanelColorPicker
+              active={!selectedSwatch}
+              color={doodleColor}
+              inputValue={colorInputValue(doodleColor)}
+              onChange={onColorPickerChange}
             />
-          ))}
-        </div>
-        <div className="tm-divider"></div>
-        <div className="tm-pen-types">
-          <button className={`pen-type-btn${penType === 'pen' ? ' active' : ''}`}
-            data-pen="pen" title="Pen" onClick={() => onPenTypeClick('pen')}>
-            <svg width="16" height="16" viewBox="0 0 16 16">
-              <circle cx="8" cy="8" r="4" fill="white" />
-            </svg>
-          </button>
-          <button className={`pen-type-btn${penType === 'pencil' ? ' active' : ''}`}
-            data-pen="pencil" title="Pencil" onClick={() => onPenTypeClick('pencil')}>
-            <svg width="16" height="16" viewBox="0 0 16 16">
-              <rect x="6" y="1" width="4" height="10" rx="1.5" fill="white" />
-              <polygon points="6,11 10,11 8,15" fill="white" />
-            </svg>
-          </button>
-          <button className={`pen-type-btn${penType === 'marker' ? ' active' : ''}`}
-            data-pen="marker" title="Marker" onClick={() => onPenTypeClick('marker')}>
-            <svg width="16" height="16" viewBox="0 0 16 16">
-              <rect x="1" y="6" width="14" height="4" rx="2" fill="white" />
-            </svg>
-          </button>
-        </div>
+          </div>
+
+          <div className="tm-divider" />
+
+          <ToolPanelSegment ariaLabel="Pen type">
+            <ToolPanelSegmentButton active={penType === 'pen'} label="Pen" onClick={() => onPenTypeClick('pen')}>
+              <PenGlyph />
+            </ToolPanelSegmentButton>
+            <ToolPanelSegmentButton active={penType === 'pencil'} label="Pencil" onClick={() => onPenTypeClick('pencil')}>
+              <PencilGlyph />
+            </ToolPanelSegmentButton>
+            <ToolPanelSegmentButton active={penType === 'marker'} label="Marker" onClick={() => onPenTypeClick('marker')}>
+              <MarkerGlyph />
+            </ToolPanelSegmentButton>
+          </ToolPanelSegment>
+        </ToolPanelRow>
       </div>
     </>
   );

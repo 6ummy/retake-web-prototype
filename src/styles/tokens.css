@@ -84,12 +84,43 @@
   --motion-spring: 0.36s cubic-bezier(0.34, 1.2, 0.64, 1);
   --motion-enter: 0.42s cubic-bezier(0.22, 1, 0.36, 1);
 
+  /* Layering */
+  --z-frame-bg: 0;
+  --z-inviter-media-color-bg: 10;
+  --z-inviter-media-gallery: 20;
+  --z-inviter-media-doodle-pen: 30;
+  --z-inviter-media-sticker: 40;
+  --z-inviter-media-transparent-pen: 50;
+  --z-invitee-media-gallery: 60;
+  --z-invitee-media-doodle-pen: 70;
+  --z-invitee-media-sticker: 80;
+  --z-invitee-media-transparent-pen: 90;
+  --z-frame-scrim: 100;
+  --z-editor-chrome: 110;
+  --z-tool-mode: 120;
+  --z-recording-indicator: 130;
+  --z-app-scrim: 200;
+  --z-sheet: 210;
+  --z-toast: 220;
+  --z-modal-scrim: 300;
+  --z-modal: 310;
+  --z-drag-handle: 400;
+
+  /* Legacy compressed layer aliases used while older CSS is migrated. */
+  --z-live-media: 1;
+  --z-frame-art: 2;
+  --z-edit-canvas: 3;
+  --z-selection: 4;
+  --z-stickers: 5;
+  --z-overlay-scrim: 10;
+  --z-new-sticker: 15;
+
+  /* Legacy aliases used while older CSS is migrated. */
+  --z-scrim: var(--z-app-scrim);
+  --z-overlay: var(--z-sheet);
+  --z-toolbar: var(--z-editor-chrome);
+
   /* Layout and controls */
-  --z-scrim: 10;
-  --z-overlay: 11;
-  --z-modal-scrim: 12;
-  --z-modal: 13;
-  --z-toolbar: 6;
   --control-icon-size: 42px;
   --control-icon-padding: 7px;
   --icon-size: 28px;

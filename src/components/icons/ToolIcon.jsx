@@ -54,10 +54,27 @@ export default function ToolIcon({ type }) {
     case 'eraser':
       icon = (
         <svg {...iconProps}>
-          <circle cx="6.5" cy="7" r="2.5" />
-          <circle cx="6.5" cy="17" r="2.5" />
-          <path d="M8.75 5.75 L20.5 18.5" />
-          <path d="M8.75 18.25 L20.5 5.5" />
+          <path d="M4.75 14.25 12.9 6.1a2.35 2.35 0 0 1 3.32 0l3.68 3.68a2.35 2.35 0 0 1 0 3.32l-5.15 5.15H8.2l-3.45-3.45a.78.78 0 0 1 0-1.1z" />
+          <path d="m11.25 7.75 5 5" />
+          <path d="M8.25 18.25h11.5" />
+        </svg>
+      );
+      break;
+    case 'magicPen':
+      icon = (
+        <svg {...iconProps}>
+          <defs>
+            <pattern id="magic-pen-checker" width="4" height="4" patternUnits="userSpaceOnUse">
+              <path d="M0 0h2v2H0zM2 2h2v2H2z" fill="currentColor" stroke="none" />
+            </pattern>
+            <clipPath id="magic-pen-circle">
+              <circle cx="12" cy="12" r="7.25" />
+            </clipPath>
+          </defs>
+          <circle cx="12" cy="12" r="7.25" />
+          <g clipPath="url(#magic-pen-circle)" opacity="0.82">
+            <rect x="4.75" y="4.75" width="14.5" height="14.5" fill="url(#magic-pen-checker)" stroke="none" />
+          </g>
         </svg>
       );
       break;

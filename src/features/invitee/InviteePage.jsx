@@ -54,6 +54,8 @@ export default function InviteePage() {
   const activeToolRef = useRef(null);
   const toolRadiusRef = useRef(32);
   const doodleColorRef = useRef('#FFFFFF');
+  const doodleOpacityRef = useRef(100);
+  const doodleModeRef = useRef('draw');
   const penTypeRef = useRef('pen');
   const paintingRef = useRef(false);
   const lastXRef = useRef(0);
@@ -78,6 +80,8 @@ export default function InviteePage() {
   const [screenClass, setScreenClass] = useState('');
   const [activeTool, setActiveTool] = useState(null);
   const [doodleColor, setDoodleColor] = useState('#FFFFFF');
+  const [doodleOpacity, setDoodleOpacity] = useState(100);
+  const [doodleMode, setDoodleMode] = useState('draw');
   const [penType, setPenType] = useState('pen');
   const [frameUrl] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -205,8 +209,12 @@ export default function InviteePage() {
     svg.setAttribute('height', d);
     svg.setAttribute('viewBox', `${-d/2} ${-d/2} ${d} ${d}`);
     circle.setAttribute('r', r);
-    if (activeToolRef.current === 'doodle') {
-      const alpha = doodleColorRef.current === '#FFFFFF' ? '44' : '55';
+    if (activeToolRef.current === 'doodle' && doodleModeRef.current === 'draw') {
+      const baseAlpha = doodleColorRef.current === '#FFFFFF' ? 0.27 : 0.33;
+      const alpha = Math.round(baseAlpha * (doodleOpacityRef.current / 100) * 255)
+        .toString(16)
+        .padStart(2, '0')
+        .toUpperCase();
       circle.setAttribute('fill', doodleColorRef.current + alpha);
       circle.setAttribute('stroke', doodleColorRef.current);
       circle.setAttribute('stroke-dasharray', '');
@@ -250,26 +258,32 @@ export default function InviteePage() {
 
   // ── Drawing ──
   const paintAt = useCallback((x, y, fx, fy) => {
-    const canvas = canvasRef.current;
     const ctx = ctxRef.current;
+    const doodleOpacity = Math.max(0.05, Math.min(1, doodleOpacityRef.current / 100));
     ctx.save();
     ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(x, y);
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    if (penTypeRef.current === 'pencil') {
+    if (doodleModeRef.current === 'erase') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = 'rgba(0,0,0,1)';
+      ctx.lineWidth = toolRadiusRef.current * 2;
+      ctx.stroke();
+    } else if (penTypeRef.current === 'pencil') {
       ctx.globalCompositeOperation = 'source-over';
       ctx.strokeStyle = doodleColorRef.current;
       ctx.lineWidth = Math.max(1, toolRadiusRef.current * 0.8);
-      ctx.globalAlpha = 0.55; ctx.stroke();
-      ctx.lineWidth = toolRadiusRef.current * 1.6; ctx.globalAlpha = 0.08; ctx.stroke();
+      ctx.globalAlpha = 0.55 * doodleOpacity; ctx.stroke();
+      ctx.lineWidth = toolRadiusRef.current * 1.6; ctx.globalAlpha = 0.08 * doodleOpacity; ctx.stroke();
     } else if (penTypeRef.current === 'marker') {
       ctx.globalCompositeOperation = 'source-over';
       ctx.strokeStyle = doodleColorRef.current;
       ctx.lineWidth = toolRadiusRef.current * 3.5;
       ctx.lineCap = 'square'; ctx.lineJoin = 'miter';
-      ctx.globalAlpha = 0.38; ctx.stroke();
+      ctx.globalAlpha = 0.38 * doodleOpacity; ctx.stroke();
     } else {
       ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = doodleOpacity;
       ctx.strokeStyle = doodleColorRef.current;
       ctx.lineWidth = toolRadiusRef.current * 2;
       ctx.stroke();
@@ -308,16 +322,18 @@ export default function InviteePage() {
     const cameraView = videoRef.current;
 
     if (photoContainer && photoContainer.classList.contains('active')) {
+      ctx.fillStyle = getComputedStyle(document.documentElement)
+        .getPropertyValue('--color-ink')
+        .trim() || '#1A1A2E';
+      ctx.fillRect(0, 0, 414, 748);
       ctx.save();
       ctx.translate(414 / 2, 748 / 2);
       ctx.scale(photoScaleRef.current, photoScaleRef.current);
       ctx.rotate(photoRotationRef.current * Math.PI / 180);
       const iw = photoOverlay.naturalWidth, ih = photoOverlay.naturalHeight;
-      const boxAr = 414 / 748, imgAr = iw / ih;
-      let sx, sy, sw, sh;
-      if (imgAr > boxAr) { sh = ih; sw = sh * boxAr; sx = (iw - sw) / 2; sy = 0; }
-      else { sw = iw; sh = sw / boxAr; sx = 0; sy = (ih - sh) / 2; }
-      ctx.drawImage(photoOverlay, sx, sy, sw, sh, -414 / 2, -748 / 2, 414, 748);
+      const scale = 414 / iw;
+      const drawH = ih * scale;
+      ctx.drawImage(photoOverlay, 0, 0, iw, ih, -414 / 2, -drawH / 2, 414, drawH);
       ctx.restore();
     } else {
       const vw = cameraView.videoWidth || 414;
@@ -1186,6 +1202,28 @@ export default function InviteePage() {
     syncCursor();
   }, [syncCursor]);
 
+  const handleColorPickerChange = useCallback((e) => {
+    const color = e.target.value.toUpperCase();
+    doodleColorRef.current = color;
+    setDoodleColor(color);
+    syncCursor();
+  }, [syncCursor]);
+
+  const handleDoodleModeClick = useCallback((mode) => {
+    doodleModeRef.current = mode;
+    setDoodleMode(mode);
+    if (canvasRef.current) canvasRef.current.style.cursor = 'crosshair';
+    syncCursor();
+  }, [syncCursor]);
+
+  const handleDoodleOpacityInput = useCallback((e) => {
+    const value = Math.max(5, Math.min(100, Number(e.target.value) || 100));
+    doodleOpacityRef.current = value;
+    setDoodleOpacity(value);
+    e.target.style.setProperty('--fill', `${value}%`);
+    syncCursor();
+  }, [syncCursor]);
+
   const handlePenTypeClick = useCallback((type) => {
     penTypeRef.current = type;
     setPenType(type);
@@ -1219,7 +1257,7 @@ export default function InviteePage() {
 
       {/* Frame container */}
       <div id="frameContainer"
-        style={{ position:'absolute',left:'8px',top:'77px',width:'414px',height:'750px',overflow:'hidden',borderRadius:'32px',zIndex:1 }}>
+        style={{ position:'absolute',left:'8px',top:'77px',width:'414px',height:'750px',overflow:'hidden',borderRadius:'32px',zIndex:'var(--z-live-media)' }}>
 
         <div id="mkSlotBg"
           style={{ position:'absolute',left:0,top:0,width:'414px',height:'750px',
@@ -1247,11 +1285,6 @@ export default function InviteePage() {
 
         <canvas id="editCanvas" ref={canvasRef} className="no-tool" width="414" height="750"></canvas>
 
-        {/* Brush cursor — must be inside frameContainer so absolute positioning is relative to the canvas */}
-        <svg id="brushCursor" ref={brushCursorRef} width="40" height="40" viewBox="-20 -20 40 40">
-          <circle id="brushCursorCircle" ref={brushCursorCircleRef} r="16"
-            fill="rgba(255,255,255,0.1)" stroke="white" strokeWidth="1.5" />
-        </svg>
       </div>
 
       {/* Cutout glow */}
@@ -1443,6 +1476,8 @@ export default function InviteePage() {
         tmLeftIn={tmLeftIn}
         tmPenBarIn={tmPenBarIn}
         doodleColor={doodleColor}
+        doodleMode={doodleMode}
+        doodleOpacity={doodleOpacity}
         penType={penType}
         tmUndoBtnDisabled={tmUndoBtnDisabled}
         tmRedoBtnDisabled={tmRedoBtnDisabled}
@@ -1450,6 +1485,9 @@ export default function InviteePage() {
         onUndo={toolUndo}
         onRedo={toolRedo}
         onSwatchClick={handleSwatchClick}
+        onDoodleModeClick={handleDoodleModeClick}
+        onColorPickerChange={handleColorPickerChange}
+        onDoodleOpacityInput={handleDoodleOpacityInput}
         onPenTypeClick={handlePenTypeClick}
       />
 

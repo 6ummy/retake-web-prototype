@@ -291,7 +291,7 @@ export function useMagicEraser({
     magicPhaseRef.current = 'refine';
     setMagicPhase('refine');
     renderMask(mask);
-    if (canvasRef.current) canvasRef.current.style.cursor = 'none';
+    if (canvasRef.current) canvasRef.current.style.cursor = 'crosshair';
     syncCursor();
     if (brushCursorRef.current) brushCursorRef.current.style.display = 'none';
   }, [brushCursorRef, canvasRef, detectMask, magicDetecting, renderLasso, renderMask, reset, showToast, syncCursor]);

@@ -4,12 +4,13 @@ import GlassSurface from '../../components/ui/GlassSurface';
 import SolidIconButton from '../../components/ui/SolidIconButton';
 import { useToast } from '../editor/hooks/useToast';
 import { useStickerSystem } from '../editor/hooks/useStickerSystem';
-import { useMagicEraser } from '../editor/hooks/useMagicEraser';
 import { useCanvasDrawing } from '../editor/hooks/useCanvasDrawing';
 import { useConfirmDialog } from '../editor/hooks/useConfirmDialog';
 import { useToolbarState } from '../editor/hooks/useToolbarState';
 import { useHistory } from '../editor/hooks/useHistory';
 import { useTextTool } from '../editor/hooks/useTextTool';
+import useInviterLayerStack from '../editor/hooks/useInviterLayerStack.js';
+import useMediaTransform from '../editor/hooks/useMediaTransform';
 import { useSharePanel } from './hooks/useSharePanel';
 import { useEditName } from './hooks/useEditName';
 import StickerPanel from '../editor/components/StickerPanel';
@@ -19,15 +20,22 @@ import ConfirmDialog from '../editor/components/ConfirmDialog';
 import FrameCanvas from '../editor/components/FrameCanvas';
 import ExitButton from '../editor/components/ExitButton';
 import UndoRedoCluster from '../editor/components/UndoRedoCluster';
-import EraserBar from '../editor/components/EraserBar';
 import Toast from '../../components/ui/Toast';
 import VerticalToolbar from './components/VerticalToolbar';
 import BottomBar from './components/BottomBar';
+import Step3CameraControls from './components/Step3CameraControls';
+import Step3ZoomControl from './components/Step3ZoomControl';
+import PhotoInputs from './components/PhotoInputs';
 import EditNamePopup from './components/EditNamePopup';
 import SharePopup from './components/SharePopup';
 import IntroCard from './components/IntroCard';
 import { INVITER_FLOW_STATES } from './state.js';
-import { loadImage } from '../editor/utils/canvas.js';
+import {
+  drawContainedImageWithBackground,
+  drawMediaCoverWithTransform,
+  getAverageImageColor,
+  loadImage,
+} from '../editor/utils/canvas.js';
 
 const STEP3_MODE = {
   LIVE: 'live',
@@ -38,12 +46,24 @@ const STEP3_MODE = {
 const SAVED_FRAMES_KEY = 'retake.savedFrames.v1';
 const STEP3_LONG_PRESS_MS = 420;
 const STEP3_MAX_RECORD_MS = 10000;
+const STEP3_DOUBLE_TAP_MS = 260;
+const STEP3_TIMER_STEPS = [0, 3, 10];
+const STEP3_MIN_SOFTWARE_SCALE = 0.05;
+const STEP3_MAX_SOFTWARE_SCALE = 4;
+const STEP3_FLASH_WARMUP_MS = 120;
+const STEP3_FLASH_FADE_MS = 240;
 const STEP3_VIDEO_TYPES = [
   'video/webm;codecs=vp9',
   'video/webm;codecs=vp8',
   'video/webm',
   'video/mp4',
 ];
+const STEP3_DEFAULT_CAPABILITIES = {
+  torch: false,
+  zoom: false,
+  zoomMin: 1,
+  zoomMax: 1,
+};
 
 function loadSavedFrames() {
   try {
@@ -57,24 +77,6 @@ function loadSavedFrames() {
 
 function persistSavedFrames(frames) {
   window.localStorage?.setItem(SAVED_FRAMES_KEY, JSON.stringify(frames));
-}
-
-function drawCoverImage(ctx, source, width, height) {
-  const sourceWidth = source.videoWidth || source.naturalWidth || source.width || width;
-  const sourceHeight = source.videoHeight || source.naturalHeight || source.height || height;
-  const targetRatio = width / height;
-  const sourceRatio = sourceWidth / sourceHeight;
-  let sx = 0, sy = 0, sw = sourceWidth, sh = sourceHeight;
-
-  if (sourceRatio > targetRatio) {
-    sw = sourceHeight * targetRatio;
-    sx = (sourceWidth - sw) / 2;
-  } else {
-    sh = sourceWidth / targetRatio;
-    sy = (sourceHeight - sh) / 2;
-  }
-
-  ctx.drawImage(source, sx, sy, sw, sh, 0, 0, width, height);
 }
 
 function drawRetakeWatermark(ctx, width, height) {
@@ -94,6 +96,171 @@ function chooseVideoMimeType() {
   return STEP3_VIDEO_TYPES.find(type => MediaRecorder.isTypeSupported(type)) || '';
 }
 
+function getStep3CameraConstraints(facingMode) {
+  return [
+    {
+      video: {
+        facingMode: { ideal: facingMode },
+        resizeMode: { ideal: 'none' },
+      },
+      audio: false,
+    },
+    {
+      video: {
+        facingMode: { ideal: facingMode },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        resizeMode: { ideal: 'none' },
+      },
+      audio: false,
+    },
+    {
+      video: {
+        facingMode: { ideal: facingMode },
+      },
+      audio: false,
+    },
+    {
+      video: true,
+      audio: false,
+    },
+  ];
+}
+
+function getStep3TrackCapabilities(track) {
+  const capabilities = track?.getCapabilities?.() || {};
+  const zoom = capabilities.zoom;
+  const zoomMin = Number.isFinite(zoom?.min) ? zoom.min : 1;
+  const zoomMax = Number.isFinite(zoom?.max) ? zoom.max : zoomMin;
+
+  return {
+    torch: Boolean(capabilities.torch),
+    zoom: Boolean(zoom && zoomMax >= zoomMin),
+    zoomMin,
+    zoomMax,
+  };
+}
+
+function clampStep3Zoom(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function roundStep3Zoom(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function logStep3CameraSettings(track, video) {
+  if (!import.meta.env.DEV) return;
+  console.info('[step3] Camera settings', {
+    track: track?.getSettings?.() || null,
+    video: {
+      width: video?.videoWidth || 0,
+      height: video?.videoHeight || 0,
+    },
+  });
+}
+
+function shouldRetryStep3Camera(err) {
+  return ![
+    'NotAllowedError',
+    'PermissionDeniedError',
+    'SecurityError',
+    'NotReadableError',
+    'TrackStartError',
+  ].includes(err?.name);
+}
+
+async function requestStep3CameraStream(facingMode) {
+  let lastError;
+  const constraintsList = getStep3CameraConstraints(facingMode);
+
+  for (const constraints of constraintsList) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (err) {
+      lastError = err;
+      console.warn('[step3] Camera attempt failed:', err?.name, err?.message, constraints);
+      if (!shouldRetryStep3Camera(err)) break;
+    }
+  }
+
+  throw lastError || new Error('Camera request failed');
+}
+
+function formatStep3CameraError(err) {
+  if (!err?.name) return '';
+  return ` (${err.name})`;
+}
+
+function getStep3CameraIssue(err) {
+  const hasCameraApi = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
+  if (!hasCameraApi && typeof window !== 'undefined' && !window.isSecureContext) {
+    return {
+      fallback: 'Open with HTTPS to use camera',
+      toast: 'Camera needs HTTPS on mobile Safari',
+    };
+  }
+  if (!hasCameraApi) {
+    return {
+      fallback: 'Camera unavailable in this browser',
+      toast: 'Camera unavailable in this browser',
+    };
+  }
+
+  const detail = formatStep3CameraError(err);
+  switch (err?.name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+      return {
+        fallback: `Camera permission blocked${detail}`,
+        toast: `Allow camera access${detail}`,
+      };
+    case 'SecurityError':
+      return {
+        fallback: `Camera blocked by browser security${detail}`,
+        toast: `Camera blocked${detail}`,
+      };
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+      return {
+        fallback: `No camera found${detail}`,
+        toast: `No camera found${detail}`,
+      };
+    case 'NotReadableError':
+    case 'TrackStartError':
+      return {
+        fallback: `Camera is already in use${detail}`,
+        toast: `Camera is already in use${detail}`,
+      };
+    case 'OverconstrainedError':
+    case 'ConstraintNotSatisfiedError':
+      return {
+        fallback: `Camera settings unsupported${detail}`,
+        toast: `Camera settings unsupported${detail}`,
+      };
+    default:
+      return {
+        fallback: `Camera unavailable${detail}`,
+        toast: `Camera unavailable${detail}`,
+      };
+  }
+}
+
+function waitForVideoMetadata(video) {
+  if (!video || video.readyState >= 1) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    let timeoutId;
+    const done = () => {
+      clearTimeout(timeoutId);
+      video.removeEventListener('loadedmetadata', done);
+      resolve();
+    };
+    timeoutId = setTimeout(done, 1200);
+    video.addEventListener('loadedmetadata', done, { once: true });
+  });
+}
+
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -110,6 +277,7 @@ function downloadBlob(blob, filename) {
 export default function InviterPage() {
   // ── Canvas / ctx refs ──
   const canvasRef = useRef(null);
+  const s2GalleryCanvasRef = useRef(null);
   const ctxRef = useRef(null);
   const selectionCanvasRef = useRef(null);
   const frameElRef = useRef(null);
@@ -118,8 +286,9 @@ export default function InviterPage() {
   const activeToolRef = useRef(null);
   const toolRadiusRef = useRef(32);
   const eraserOpacityRef = useRef(1.0);
-  const eraserModeRef = useRef('freehand');
   const doodleColorRef = useRef('#FFFFFF');
+  const doodleOpacityRef = useRef(100);
+  const doodleModeRef = useRef('draw');
   const penTypeRef = useRef('pen');
 
   // ── Timer / element refs ──
@@ -130,8 +299,8 @@ export default function InviterPage() {
   const brushCursorCircleRef = useRef(null);
   const tmSizeHandleRef = useRef(null);
   const tmLeftPanelRef = useRef(null);
-  const eraserOpacitySliderRef = useRef(null);
   const galleryInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
   const introPhotoFlowRef = useRef(false);
   const step3VideoRef = useRef(null);
   const step3StreamRef = useRef(null);
@@ -142,8 +311,19 @@ export default function InviterPage() {
   const step3RecordStopTimerRef = useRef(null);
   const step3RecordStartedAtRef = useRef(0);
   const step3LongPressTimerRef = useRef(null);
+  const step3TapCaptureTimerRef = useRef(null);
+  const step3FlashTimerRef = useRef(null);
+  const step3LastTapAtRef = useRef(0);
+  const step3CountdownTimersRef = useRef([]);
+  const step3CountdownModeRef = useRef(null);
   const step3PointerIdRef = useRef(null);
   const step3PointerDownRef = useRef(false);
+  const step3PointerMovedRef = useRef(false);
+  const step3HardwareZoomRef = useRef(1);
+  const s2GalleryImageRef = useRef(null);
+  const s2GalleryBackgroundRef = useRef('#F7F5F2');
+  const s2GalleryGestureActiveRef = useRef(false);
+  const s2GalleryGestureMovedRef = useRef(false);
   const step3RecordingRef = useRef(false);
   const step3RecordingStartingRef = useRef(false);
   const step3PendingStopRef = useRef(false);
@@ -152,8 +332,9 @@ export default function InviterPage() {
 
   // ── UI visibility state ──
   const [activeTool, setActiveTool] = useState(null);
-  const [eraserMode, setEraserMode] = useState('freehand');
   const [doodleColor, setDoodleColor] = useState('#FFFFFF');
+  const [doodleOpacity, setDoodleOpacity] = useState(100);
+  const [doodleMode, setDoodleMode] = useState('draw');
   const [penType, setPenType] = useState('pen');
   const [frameName, setFrameName] = useState('my frame');
   const [editorVisible, setEditorVisible] = useState(false);
@@ -169,7 +350,7 @@ export default function InviterPage() {
   const [exitBtnOut, setExitBtnOut] = useState(false);
   const [undoRedoOut, setUndoRedoOut] = useState(false);
   const [tmIn, setTmIn] = useState(false);
-  const [tmBarMode, setTmBarMode] = useState(null); // 'doodle' | 'eraser' | null
+  const [tmBarMode, setTmBarMode] = useState(null); // 'doodle' | 'magicPen' | null
   const [tmLeftIn, setTmLeftIn] = useState(false);
   const [step3Mode, setStep3Mode] = useState(null);
   const [step3PhotoUrl, setStep3PhotoUrl] = useState('');
@@ -177,6 +358,15 @@ export default function InviterPage() {
   const [step3Recording, setStep3Recording] = useState(false);
   const [step3RecordingProgress, setStep3RecordingProgress] = useState(1);
   const [step3CameraReady, setStep3CameraReady] = useState(false);
+  const [step3CameraIssue, setStep3CameraIssue] = useState('');
+  const [step3FacingMode, setStep3FacingMode] = useState('environment');
+  const [step3FlashEnabled, setStep3FlashEnabled] = useState(false);
+  const [step3ScreenFlashActive, setStep3ScreenFlashActive] = useState(false);
+  const [step3TimerSeconds, setStep3TimerSeconds] = useState(0);
+  const [step3ZoomMode, setStep3ZoomMode] = useState(1);
+  const [step3CameraCapabilities, setStep3CameraCapabilities] = useState(STEP3_DEFAULT_CAPABILITIES);
+  const [step3CountdownValue, setStep3CountdownValue] = useState(null);
+  const [s2GalleryAdjustable, setS2GalleryAdjustable] = useState(false);
   const [savedFrames, setSavedFrames] = useState(() => loadSavedFrames());
   const [savedFramesVisible, setSavedFramesVisible] = useState(false);
   const bottomBarOutBeforeStickerDragRef = useRef(false);
@@ -193,12 +383,89 @@ export default function InviterPage() {
     setBottomBarOut(bottomBarOutBeforeStickerDragRef.current);
     bottomBarOutBeforeStickerDragRef.current = false;
   }, []);
+  const s2GalleryTransform = useMediaTransform();
+  const step3CameraTransform = useMediaTransform({
+    initialMirror: step3FacingMode === 'user',
+    minScale: STEP3_MIN_SOFTWARE_SCALE,
+    maxScale: STEP3_MAX_SOFTWARE_SCALE,
+    maxOffsetX: Infinity,
+    maxOffsetY: Infinity,
+  });
+  const drawS2GalleryBase = useCallback((targetCtx) => {
+    const image = s2GalleryImageRef.current;
+    const canvas = canvasRef.current;
+    if (!image || !canvas || !targetCtx) return false;
+    drawContainedImageWithBackground(targetCtx, image, canvas.width, canvas.height, {
+      backgroundColor: s2GalleryBackgroundRef.current,
+      fit: 'width',
+      transform: s2GalleryTransform.transformRef.current,
+    });
+    return true;
+  }, [s2GalleryTransform.transformRef]);
+  const layerStack = useInviterLayerStack({
+    frameElRef,
+    canvasRef,
+    drawGalleryBase: drawS2GalleryBase,
+  });
+  const createInviterSnapshot = useCallback(() => ({
+    canvas: (() => {
+      try { return canvasRef.current?.toDataURL() || null; } catch { return null; }
+    })(),
+    layers: layerStack.createSnapshot(),
+    gallery: {
+      image: s2GalleryImageRef.current,
+      background: s2GalleryBackgroundRef.current,
+      adjustable: s2GalleryAdjustable,
+      transform: { ...s2GalleryTransform.transformRef.current },
+    },
+  }), [layerStack, s2GalleryAdjustable, s2GalleryTransform.transformRef]);
+  const restoreInviterSnapshot = useCallback((snap) => new Promise(resolve => {
+    if (!snap) { resolve(); return; }
+    const restoreCanvas = () => {
+      const canvas = canvasRef.current;
+      const ctx = ctxRef.current;
+      if (!canvas || !ctx) return Promise.resolve();
+      if (!snap.canvas) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return Promise.resolve();
+      }
+      return new Promise(res => {
+        const img = new Image();
+        img.onload = () => {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+          res();
+        };
+        img.onerror = () => res();
+        img.src = snap.canvas;
+      });
+    };
+
+    restoreCanvas().then(() => {
+      layerStack.restoreSnapshot(snap.layers);
+      s2GalleryImageRef.current = snap.gallery?.image || null;
+      s2GalleryBackgroundRef.current = snap.gallery?.background || '#F7F5F2';
+      setS2GalleryAdjustable(!!snap.gallery?.adjustable);
+      if (snap.gallery?.transform) s2GalleryTransform.setTransform(snap.gallery.transform);
+      const galleryCanvas = s2GalleryCanvasRef.current;
+      const galleryCtx = galleryCanvas?.getContext('2d');
+      if (galleryCanvas && galleryCtx) {
+        galleryCtx.clearRect(0, 0, galleryCanvas.width, galleryCanvas.height);
+        drawS2GalleryBase(galleryCtx);
+      }
+      resolve();
+    });
+  }), [drawS2GalleryBase, layerStack, s2GalleryTransform]);
   const stickerSys = useStickerSystem({
     ctxRef,
     setScrimVisible,
     showToast,
     onItemDragStart: handleStickerItemDragStart,
     onItemDragEnd: handleStickerItemDragEnd,
+    overlayParentRef: frameElRef,
+    onItemPlaced: layerStack.registerItemLayer,
+    onItemTouched: layerStack.touchLayer,
+    onItemRemoved: layerStack.removeLayer,
   });
 
   const {
@@ -214,7 +481,14 @@ export default function InviterPage() {
     tmUndoBtnDisabled, tmRedoBtnDisabled,
     snapshot, restoreSnapshot, syncHistoryBtns, pushHistory,
     mainUndo, mainRedo, toolUndo, toolRedo,
-  } = useHistory({ canvasRef, ctxRef, activeToolRef, showToast });
+  } = useHistory({
+    canvasRef,
+    ctxRef,
+    activeToolRef,
+    showToast,
+    createSnapshot: createInviterSnapshot,
+    restoreSnapshot: restoreInviterSnapshot,
+  });
 
   const {
     toolsCollapsed, setToolsCollapsed,
@@ -231,6 +505,14 @@ export default function InviterPage() {
     () => orderedToolIds.filter(toolId => ['text', 'stickers', 'doodle', 'download'].includes(toolId)),
     [orderedToolIds]
   );
+  const step3ZoomOptions = useMemo(() => {
+    if (!step3CameraCapabilities.zoom) return [];
+    return [0.5, 1, 2].filter(
+      zoom => step3CameraCapabilities.zoomMin <= zoom && step3CameraCapabilities.zoomMax >= zoom
+    );
+  }, [step3CameraCapabilities]);
+  const step3UsesHardwareTorch = step3FacingMode === 'environment' && step3CameraCapabilities.torch;
+  const step3UsesScreenFlash = step3FlashEnabled && !step3UsesHardwareTorch;
 
   const {
     sharePanelVisible, setSharePanelVisible,
@@ -242,13 +524,12 @@ export default function InviterPage() {
     setScrimVisible,
     getFrameDataUrl: async () => {
       if (activeToolRef.current) exitCurrentTool(true);
-      const source = canvasRef.current;
       const out = document.createElement('canvas');
-      out.width = source.width;
-      out.height = source.height;
+      const { width, height } = getCanvasSize();
+      out.width = width;
+      out.height = height;
       const outCtx = out.getContext('2d');
-      outCtx.drawImage(source, 0, 0);
-      await stickerSys.drawStickersToContext(outCtx);
+      await layerStack.renderFrameLayersToContext(outCtx, { width, height });
       return out.toDataURL('image/png');
     },
   });
@@ -302,8 +583,12 @@ export default function InviterPage() {
     svg.setAttribute('height', d);
     svg.setAttribute('viewBox', `${-d/2} ${-d/2} ${d} ${d}`);
     circle.setAttribute('r', r);
-    if (activeToolRef.current === 'doodle') {
-      const alpha = doodleColorRef.current === '#FFFFFF' ? '44' : '55';
+    if (activeToolRef.current === 'doodle' && doodleModeRef.current === 'draw') {
+      const baseAlpha = doodleColorRef.current === '#FFFFFF' ? 0.27 : 0.33;
+      const alpha = Math.round(baseAlpha * (doodleOpacityRef.current / 100) * 255)
+        .toString(16)
+        .padStart(2, '0')
+        .toUpperCase();
       circle.setAttribute('fill', doodleColorRef.current + alpha);
       circle.setAttribute('stroke', doodleColorRef.current);
       circle.setAttribute('stroke-dasharray', '');
@@ -339,61 +624,20 @@ export default function InviterPage() {
       1 - (clientY - rect.top - TRACK_TOP_Y) / (TRACK_BOT_Y - TRACK_TOP_Y)));
   }, []);
 
-  const {
-    magicPhaseRef,
-    magicLassoRef,
-    magicDrawingRef,
-    magicRefiningRef,
-    magicPhase,
-    magicConfirmDisabled,
-    magicDetecting,
-    magicRefMode,
-    magicOpacity,
-    clearOverlay: clearMagicOverlay,
-    renderLasso: renderMagicLasso,
-    reset: resetMagicMode,
-    paintRefine: paintMagicRefine,
-    pushMaskHistory: pushMagicMaskHistory,
-    confirmLasso: confirmMagicLasso,
-    apply: applyMagicErase,
-    setConfirmDisabled: setMagicConfirmDisabled,
-    setRefMode: handleMagicRefMode,
-    handleOpacityInput: handleMagicOpacityInput,
-  } = useMagicEraser({
-    canvasRef,
-    ctxRef,
-    selectionCanvasRef,
-    toolRadiusRef,
-    brushCursorRef,
-    showToast,
-    syncCursor,
-    pushHistory,
-  });
-
   const { resetInteractionState } = useCanvasDrawing({
     canvasRef,
     ctxRef,
     activeToolRef,
     toolRadiusRef,
     eraserOpacityRef,
-    eraserModeRef,
     doodleColorRef,
+    doodleOpacityRef,
+    doodleModeRef,
     penTypeRef,
     frameElRef,
     brushCursorRef,
     tmLeftPanelRef,
     stickerSys,
-    magic: {
-      phaseRef: magicPhaseRef,
-      lassoRef: magicLassoRef,
-      drawingRef: magicDrawingRef,
-      refiningRef: magicRefiningRef,
-      clearOverlay: clearMagicOverlay,
-      renderLasso: renderMagicLasso,
-      paintRefine: paintMagicRefine,
-      pushMaskHistory: pushMagicMaskHistory,
-      setConfirmDisabled: setMagicConfirmDisabled,
-    },
     pushHistory,
     syncHistoryBtns,
     setHandlePos,
@@ -401,37 +645,96 @@ export default function InviterPage() {
     expandLeftPanel,
     applyTrackNorm,
     normFromClientY,
+    onCommitStroke: layerStack.addStrokeLayer,
+    onCommitCanvasFill: layerStack.setCanvasFillFromCanvas,
     onInitialIntro: () => {
-      mainUndoStackRef.current = [canvasRef.current.toDataURL()];
+      mainUndoStackRef.current = [snapshot()];
       setTimeout(() => { setScrimVisible(true); setIntroCardVisible(true); }, 400);
     },
   });
 
   // ── Configure left panel per tool ──
   const configureLeftPanel = useCallback((tool) => {
-    if (tool === 'eraser') {
-      eraserOpacityRef.current = 0.5;
-      if (eraserOpacitySliderRef.current) {
-        eraserOpacitySliderRef.current.value = 50;
-        eraserOpacitySliderRef.current.style.setProperty('--fill', '50%');
-      }
-      const val = document.getElementById('eraserOpacityVal');
-      if (val) val.textContent = '50%';
+    if (tool === 'magicPen') {
+      eraserOpacityRef.current = 1;
       toolRadiusRef.current = Math.round(4 + 0.5 * (60 - 4));
       setHandlePos(0.5);
-      eraserModeRef.current = 'freehand';
-      setEraserMode('freehand');
-      resetMagicMode();
-      if (canvasRef.current) canvasRef.current.style.cursor = 'none';
+      if (canvasRef.current) canvasRef.current.style.cursor = 'crosshair';
     } else {
       toolRadiusRef.current = Math.round(4 + 0.5 * (60 - 4));
       setHandlePos(0.5);
     }
     syncCursor();
-  }, [resetMagicMode, setHandlePos, syncCursor]);
+  }, [setHandlePos, syncCursor]);
+
+  const renderS2GalleryBase = useCallback((targetCtx) => {
+    return drawS2GalleryBase(targetCtx);
+  }, [drawS2GalleryBase]);
+
+  const getCanvasSize = useCallback(() => {
+    const canvas = canvasRef.current;
+    return {
+      width: canvas?.width || 414,
+      height: canvas?.height || 736,
+    };
+  }, []);
+
+  const renderS2GalleryPlacement = useCallback(() => {
+    const galleryCanvas = s2GalleryCanvasRef.current;
+    const galleryCtx = galleryCanvas?.getContext('2d');
+    if (!galleryCanvas || !galleryCtx) return;
+    renderS2GalleryBase(galleryCtx);
+  }, [renderS2GalleryBase]);
+
+  const renderStep3ArtworkPlacement = useCallback(async () => {
+    const galleryCanvas = s2GalleryCanvasRef.current;
+    const galleryCtx = galleryCanvas?.getContext('2d');
+    if (!galleryCanvas || !galleryCtx) return;
+    const { width, height } = getCanvasSize();
+    await layerStack.renderFrameLayersToContext(galleryCtx, {
+      width,
+      height,
+      includeItems: false,
+    });
+  }, [getCanvasSize, layerStack]);
+
+  const syncS2GalleryPlacementHistory = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !s2GalleryImageRef.current) return;
+    mainUndoStackRef.current = [snapshot()];
+    mainRedoStackRef.current = [];
+    syncHistoryBtns();
+  }, [canvasRef, mainRedoStackRef, mainUndoStackRef, snapshot, syncHistoryBtns]);
+
+  const finalizeS2GalleryPlacement = useCallback(() => {
+    if (!s2GalleryAdjustable) return;
+    const canvas = canvasRef.current;
+    const ctx = ctxRef.current;
+    if (!canvas || !ctx || !s2GalleryImageRef.current) return;
+
+    const composite = document.createElement('canvas');
+    composite.width = canvas.width;
+    composite.height = canvas.height;
+    const compositeCtx = composite.getContext('2d');
+    renderS2GalleryBase(compositeCtx);
+    compositeCtx.drawImage(canvas, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(composite, 0, 0);
+
+    const galleryCanvas = s2GalleryCanvasRef.current;
+    const galleryCtx = galleryCanvas?.getContext('2d');
+    galleryCtx?.clearRect(0, 0, galleryCanvas.width, galleryCanvas.height);
+    syncS2GalleryPlacementHistory();
+    s2GalleryImageRef.current = null;
+    s2GalleryGestureActiveRef.current = false;
+    s2GalleryGestureMovedRef.current = false;
+    setS2GalleryAdjustable(false);
+  }, [canvasRef, ctxRef, renderS2GalleryBase, s2GalleryAdjustable, syncS2GalleryPlacementHistory]);
 
   // ── Tool mode enter/exit ──
-  const enterToolMode = useCallback((tool) => {
+  const enterToolMode = useCallback(async (tool) => {
+    if (s2GalleryTransform.getActivePointerCount() > 0) s2GalleryTransform.cancel();
+
     activeToolRef.current = tool;
     setActiveTool(tool);
 
@@ -467,7 +770,7 @@ export default function InviterPage() {
     stickerSys.placedStickersRef.current.forEach(stk => { stk.el.style.pointerEvents = 'none'; });
     syncCursor();
     if (brushCursorRef.current) brushCursorRef.current.style.display = 'none';
-  }, [snapshot, configureLeftPanel, syncHistoryBtns, expandLeftPanel, syncCursor,
+  }, [snapshot, s2GalleryTransform, configureLeftPanel, syncHistoryBtns, expandLeftPanel, syncCursor,
       mainUndoStackRef, mainRedoStackRef, sessionEntrySnapRef, toolUndoStackRef, toolRedoStackRef, stickerSys]);
 
   const exitToolMode = useCallback(() => {
@@ -475,6 +778,12 @@ export default function InviterPage() {
     if (!didChange && mainUndoStackRef.current.length > 0) {
       mainUndoStackRef.current.pop();
     } else if (didChange) {
+      if (s2GalleryAdjustable) {
+        renderS2GalleryPlacement();
+      }
+      if (step3Mode) {
+        renderStep3ArtworkPlacement();
+      }
       mainUndoStackRef.current.push(snapshot());
       mainRedoStackRef.current = [];
     }
@@ -484,7 +793,6 @@ export default function InviterPage() {
 
     resetInteractionState();
     if (canvasRef.current) canvasRef.current.style.cursor = '';
-    resetMagicMode();
 
     activeToolRef.current = null;
     setActiveTool(null);
@@ -512,7 +820,7 @@ export default function InviterPage() {
     if (stickerSys.stickerOverlayRef.current) stickerSys.stickerOverlayRef.current.style.pointerEvents = '';
     stickerSys.placedStickersRef.current.forEach(stk => { stk.el.style.pointerEvents = ''; });
     if (brushCursorRef.current) brushCursorRef.current.style.display = 'none';
-  }, [resetInteractionState, resetMagicMode, snapshot, syncHistoryBtns, setToolsCollapsed, toolsCollapsedRef, toolsCollapseTimerRef,
+  }, [renderS2GalleryPlacement, renderStep3ArtworkPlacement, resetInteractionState, snapshot, step3Mode, syncHistoryBtns, setToolsCollapsed, toolsCollapsedRef, toolsCollapseTimerRef,
       mainUndoStackRef, mainRedoStackRef, toolUndoStackRef, toolRedoStackRef, sessionEntrySnapRef, stickerSys]);
 
   // ── Editor enter/exit ──
@@ -557,19 +865,25 @@ export default function InviterPage() {
     const canvas = canvasRef.current;
     const ctx = ctxRef.current;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const galleryCanvas = s2GalleryCanvasRef.current;
+    const galleryCtx = galleryCanvas?.getContext('2d');
+    galleryCtx?.clearRect(0, 0, galleryCanvas.width, galleryCanvas.height);
+    s2GalleryImageRef.current = null;
+    setS2GalleryAdjustable(false);
     stickerSys.clearStickers();
+    layerStack.clearLayers();
     mainUndoStackRef.current = [];
     mainRedoStackRef.current = [];
     toolUndoStackRef.current = [];
     toolRedoStackRef.current = [];
-    mainUndoStackRef.current.push(canvas.toDataURL());
+    mainUndoStackRef.current.push(snapshot());
     syncHistoryBtns();
     await delay(100);
     setScrimVisible(true);
     setIntroCardVisible(true);
     setEditorVisible(false);
   }, [exitToolMode, exitTextTool, syncHistoryBtns, setToolsCollapsed, toolsCollapsedRef, toolsCollapseTimerRef,
-      mainUndoStackRef, mainRedoStackRef, toolUndoStackRef, toolRedoStackRef, stickerSys]);
+      mainUndoStackRef, mainRedoStackRef, toolUndoStackRef, toolRedoStackRef, stickerSys, layerStack, snapshot]);
 
   // ── Body layout lock ──
   useEffect(() => {
@@ -593,6 +907,11 @@ export default function InviterPage() {
     else if (activeToolRef.current) exitToolMode();
   }, [exitTextTool, exitToolMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const finalizeS2LiveDecoratorsToCanvas = useCallback(async (saveHistory = false) => {
+    if (activeToolRef.current) exitCurrentTool(true);
+    if (saveHistory) pushHistory();
+  }, [exitCurrentTool, pushHistory]);
+
   // ── Tool button handlers ──
   const handleToolDoodle = useCallback(() => {
     addRecentTool('doodle');
@@ -602,12 +921,12 @@ export default function InviterPage() {
     setTimeout(() => enterToolMode('doodle'), wasActive ? 120 : 0);
   }, [exitCurrentTool, exitToolMode, enterToolMode, addRecentTool]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleToolEraser = useCallback(() => {
-    addRecentTool('eraser');
-    if (activeToolRef.current === 'eraser') { exitToolMode(); return; }
+  const handleToolMagicPen = useCallback(() => {
+    addRecentTool('magicPen');
+    if (activeToolRef.current === 'magicPen') { exitToolMode(); return; }
     const wasActive = !!activeToolRef.current;
     exitCurrentTool(true);
-    setTimeout(() => enterToolMode('eraser'), wasActive ? 120 : 0);
+    setTimeout(() => enterToolMode('magicPen'), wasActive ? 120 : 0);
   }, [exitCurrentTool, exitToolMode, enterToolMode, addRecentTool]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleToolStickers = useCallback(() => {
@@ -630,14 +949,6 @@ export default function InviterPage() {
     else exitToolMode();
   }, [exitToolMode, exitTextTool]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const getCanvasSize = useCallback(() => {
-    const canvas = canvasRef.current;
-    return {
-      width: canvas?.width || 414,
-      height: canvas?.height || 736,
-    };
-  }, []);
-
   const revokeStep3VideoUrl = useCallback(() => {
     if (step3VideoObjectUrlRef.current) {
       URL.revokeObjectURL(step3VideoObjectUrlRef.current);
@@ -646,57 +957,86 @@ export default function InviterPage() {
   }, []);
 
   const stopStep3Camera = useCallback(() => {
+    clearTimeout(step3FlashTimerRef.current);
+    step3FlashTimerRef.current = null;
     if (step3StreamRef.current) {
       step3StreamRef.current.getTracks().forEach(track => track.stop());
       step3StreamRef.current = null;
     }
     if (step3VideoRef.current) step3VideoRef.current.srcObject = null;
+    step3HardwareZoomRef.current = 1;
     setStep3CameraReady(false);
+    setStep3FlashEnabled(false);
+    setStep3ScreenFlashActive(false);
+    setStep3CameraCapabilities(STEP3_DEFAULT_CAPABILITIES);
   }, []);
 
-  const startStep3Camera = useCallback(async () => {
+  const startStep3Camera = useCallback(async (facingMode = step3FacingMode) => {
     stopStep3Camera();
     setStep3CameraReady(false);
-    if (!navigator.mediaDevices?.getUserMedia) {
-      showToast('Camera unavailable - photo upload still works');
+    setStep3CameraIssue('');
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      const issue = getStep3CameraIssue();
+      setStep3CameraIssue(issue.fallback);
+      showToast(issue.toast);
       return false;
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1080 },
-          height: { ideal: 1920 },
-        },
-        audio: false,
-      });
+      const stream = await requestStep3CameraStream(facingMode);
       step3StreamRef.current = stream;
       if (step3VideoRef.current) {
-        step3VideoRef.current.srcObject = stream;
-        await step3VideoRef.current.play().catch(() => {});
+        const video = step3VideoRef.current;
+        video.muted = true;
+        video.playsInline = true;
+        video.autoplay = true;
+        video.srcObject = stream;
+        await waitForVideoMetadata(video);
+        await video.play();
+      } else {
+        throw new Error('Camera view not mounted');
       }
+      const [track] = stream.getVideoTracks();
+      const capabilities = getStep3TrackCapabilities(track);
+      let startingZoom = 1;
+      if (capabilities.zoom && track?.applyConstraints) {
+        startingZoom = capabilities.zoomMin;
+        try {
+          await track.applyConstraints({ advanced: [{ zoom: startingZoom }] });
+        } catch (err) {
+          console.warn('[step3] Minimum hardware zoom unavailable:', err);
+          capabilities.zoom = false;
+          startingZoom = 1;
+        }
+      }
+      logStep3CameraSettings(track, step3VideoRef.current);
+      step3HardwareZoomRef.current = startingZoom;
+      setStep3CameraCapabilities(capabilities);
+      setStep3ZoomMode(roundStep3Zoom(startingZoom));
+      step3CameraTransform.reset(facingMode === 'user');
+      setStep3CameraIssue('');
       setStep3CameraReady(true);
       return true;
     } catch (err) {
       console.warn('[step3] Camera unavailable:', err?.name, err?.message);
-      showToast('Camera unavailable - try again from browser settings');
+      stopStep3Camera();
+      const issue = getStep3CameraIssue(err);
+      setStep3CameraIssue(issue.fallback);
+      showToast(issue.toast);
       return false;
     }
-  }, [showToast, stopStep3Camera]);
+  }, [showToast, step3CameraTransform, step3FacingMode, stopStep3Camera]);
 
   const buildFrameDataUrl = useCallback(async () => {
     if (activeToolRef.current) exitCurrentTool(true);
-    const source = canvasRef.current;
     const { width, height } = getCanvasSize();
     const out = document.createElement('canvas');
     out.width = width;
     out.height = height;
     const outCtx = out.getContext('2d');
-    if (source) outCtx.drawImage(source, 0, 0, width, height);
-    await stickerSys.drawStickersToContext(outCtx);
+    await layerStack.renderFrameLayersToContext(outCtx, { width, height });
     return out.toDataURL('image/png');
-  }, [exitCurrentTool, getCanvasSize, stickerSys]);
+  }, [exitCurrentTool, getCanvasSize, layerStack]);
 
   const captureStep3CameraPhoto = useCallback(async () => {
     const video = step3VideoRef.current;
@@ -705,9 +1045,9 @@ export default function InviterPage() {
     const out = document.createElement('canvas');
     out.width = width;
     out.height = height;
-    drawCoverImage(out.getContext('2d'), video, width, height);
+    drawMediaCoverWithTransform(out.getContext('2d'), video, width, height, step3CameraTransform.transformRef.current);
     return out.toDataURL('image/jpeg', 0.92);
-  }, [getCanvasSize]);
+  }, [getCanvasSize, step3CameraTransform.transformRef]);
 
   const buildStep3PhotoBlob = useCallback(async () => {
     if (!step3PhotoUrl) throw new Error('No photo captured');
@@ -771,7 +1111,7 @@ export default function InviterPage() {
       };
 
       const draw = () => {
-        drawCoverImage(outCtx, video, width, height);
+        drawMediaCoverWithTransform(outCtx, video, width, height);
         outCtx.drawImage(frameImage, 0, 0, width, height);
         drawRetakeWatermark(outCtx, width, height);
         if (!video.ended && recorder.state === 'recording') {
@@ -876,7 +1216,7 @@ export default function InviterPage() {
       step3RecorderRef.current = recorder;
 
       const drawFrame = () => {
-        drawCoverImage(recordCtx, video, width, height);
+        drawMediaCoverWithTransform(recordCtx, video, width, height, step3CameraTransform.transformRef.current);
         step3RecordRafRef.current = requestAnimationFrame(drawFrame);
       };
 
@@ -933,54 +1273,86 @@ export default function InviterPage() {
       }
     }
   }, [buildFrameDataUrl, getCanvasSize, revokeStep3VideoUrl, setToolsCollapsed, showToast, stopStep3Camera, stopStep3Recording,
-      toolsCollapsedRef, toolsCollapseTimerRef]);
+      step3CameraTransform.transformRef, toolsCollapsedRef, toolsCollapseTimerRef]);
 
-  const handleStep3PointerDown = useCallback((e) => {
-    if (step3Mode !== STEP3_MODE.LIVE || activeToolRef.current) return;
-    if (e.isPrimary === false) return;
-    e.preventDefault();
-    step3PointerDownRef.current = true;
-    step3PointerIdRef.current = e.pointerId;
-    if (e.currentTarget.setPointerCapture) {
-      try {
-        e.currentTarget.setPointerCapture(e.pointerId);
-      } catch {
-        // Pointer capture can fail if the pointer was already released.
-      }
-    }
-    clearTimeout(step3LongPressTimerRef.current);
-    step3LongPressTimerRef.current = setTimeout(() => {
-      step3LongPressTimerRef.current = null;
-      if (!step3PointerDownRef.current) return;
-      startStep3Recording();
-    }, STEP3_LONG_PRESS_MS);
-  }, [startStep3Recording, step3Mode]);
+  const cancelStep3Countdown = useCallback(() => {
+    step3CountdownTimersRef.current.forEach(timer => clearTimeout(timer));
+    step3CountdownTimersRef.current = [];
+    step3CountdownModeRef.current = null;
+    setStep3CountdownValue(null);
+  }, []);
 
-  const handleStep3PointerUp = useCallback(async (e) => {
-    if (step3Mode !== STEP3_MODE.LIVE) return;
-    e.preventDefault();
-    if (step3PointerIdRef.current !== null && e.pointerId !== step3PointerIdRef.current) return;
-    if (e.currentTarget.releasePointerCapture && e.currentTarget.hasPointerCapture?.(e.pointerId)) {
-      try {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      } catch {
-        // Ignore release races; the recording stop path below is what matters.
-      }
-    }
-    const shouldCapturePhoto = !!step3LongPressTimerRef.current;
-    step3PointerDownRef.current = false;
-    step3PointerIdRef.current = null;
-    clearTimeout(step3LongPressTimerRef.current);
-    step3LongPressTimerRef.current = null;
-
-    if (step3RecordingRef.current || step3RecordingStartingRef.current) {
-      stopStep3Recording();
+  const startStep3TimedAction = useCallback((mode, action) => {
+    cancelStep3Countdown();
+    if (!step3TimerSeconds) {
+      action();
       return;
     }
-    if (!shouldCapturePhoto) return;
 
+    step3CountdownModeRef.current = mode;
+    let remaining = step3TimerSeconds;
+    setStep3CountdownValue(remaining);
+
+    const tick = () => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        step3CountdownTimersRef.current = [];
+        step3CountdownModeRef.current = null;
+        setStep3CountdownValue(null);
+        action();
+        return;
+      }
+      setStep3CountdownValue(remaining);
+      step3CountdownTimersRef.current = [setTimeout(tick, 1000)];
+    };
+
+    step3CountdownTimersRef.current = [setTimeout(tick, 1000)];
+  }, [cancelStep3Countdown, step3TimerSeconds]);
+
+  const applyStep3HardwareZoom = useCallback(async (zoom) => {
+    if (!step3CameraCapabilities.zoom) return;
+    const [track] = step3StreamRef.current?.getVideoTracks?.() || [];
+    if (!track?.applyConstraints) return;
+    const nextZoom = clampStep3Zoom(
+      zoom,
+      step3CameraCapabilities.zoomMin,
+      step3CameraCapabilities.zoomMax
+    );
     try {
+      await track.applyConstraints({ advanced: [{ zoom: nextZoom }] });
+      step3HardwareZoomRef.current = nextZoom;
+      setStep3ZoomMode(roundStep3Zoom(nextZoom));
+    } catch (err) {
+      console.warn('[step3] Hardware zoom unavailable:', err);
+    }
+  }, [step3CameraCapabilities]);
+
+  const resetStep3CameraTransform = useCallback(async () => {
+    await applyStep3HardwareZoom(step3CameraCapabilities.zoomMin);
+    step3CameraTransform.reset(step3FacingMode === 'user');
+  }, [applyStep3HardwareZoom, step3CameraCapabilities.zoomMin, step3CameraTransform, step3FacingMode]);
+
+  const warmStep3ScreenFlash = useCallback(async () => {
+    if (!step3UsesScreenFlash) return;
+    clearTimeout(step3FlashTimerRef.current);
+    step3FlashTimerRef.current = null;
+    setStep3ScreenFlashActive(true);
+    await delay(STEP3_FLASH_WARMUP_MS);
+  }, [step3UsesScreenFlash]);
+
+  const releaseStep3ScreenFlash = useCallback(() => {
+    clearTimeout(step3FlashTimerRef.current);
+    step3FlashTimerRef.current = setTimeout(() => {
+      setStep3ScreenFlashActive(false);
+      step3FlashTimerRef.current = null;
+    }, STEP3_FLASH_FADE_MS);
+  }, []);
+
+  const completeStep3PhotoCapture = useCallback(async () => {
+    try {
+      await warmStep3ScreenFlash();
       const photoUrl = await captureStep3CameraPhoto();
+      releaseStep3ScreenFlash();
       setStep3PhotoUrl(photoUrl);
       revokeStep3VideoUrl();
       setStep3VideoUrl('');
@@ -997,16 +1369,112 @@ export default function InviterPage() {
       if (stickerSys.stickerOverlayRef.current) stickerSys.stickerOverlayRef.current.style.pointerEvents = '';
       showToast('Add stickers, text, or draw');
     } catch (err) {
+      releaseStep3ScreenFlash();
       console.warn('[step3] Photo capture failed:', err);
       showToast('Camera is still warming up');
     }
-  }, [captureStep3CameraPhoto, revokeStep3VideoUrl, showToast, step3Mode, stickerSys, stopStep3Camera,
-      setToolsCollapsed, toolsCollapsedRef, toolsCollapseTimerRef]);
+  }, [captureStep3CameraPhoto, releaseStep3ScreenFlash, revokeStep3VideoUrl, showToast, setToolsCollapsed, stickerSys, stopStep3Camera, warmStep3ScreenFlash,
+      toolsCollapsedRef, toolsCollapseTimerRef]);
+
+  const handleStep3PointerDown = useCallback((e) => {
+    if (step3Mode !== STEP3_MODE.LIVE || activeToolRef.current) return;
+    e.preventDefault();
+    if (e.isPrimary === false) {
+      step3CameraTransform.handlePointerDown(e);
+      step3PointerMovedRef.current = true;
+      clearTimeout(step3LongPressTimerRef.current);
+      step3LongPressTimerRef.current = null;
+      return;
+    }
+    if (Date.now() - step3LastTapAtRef.current < STEP3_DOUBLE_TAP_MS) {
+      clearTimeout(step3TapCaptureTimerRef.current);
+      step3TapCaptureTimerRef.current = null;
+    }
+    step3CameraTransform.handlePointerDown(e);
+    step3PointerMovedRef.current = false;
+    step3PointerDownRef.current = true;
+    step3PointerIdRef.current = e.pointerId;
+    if (e.currentTarget.setPointerCapture) {
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Pointer capture can fail if the pointer was already released.
+      }
+    }
+    clearTimeout(step3LongPressTimerRef.current);
+    step3LongPressTimerRef.current = setTimeout(() => {
+      step3LongPressTimerRef.current = null;
+      if (!step3PointerDownRef.current) return;
+      startStep3TimedAction('video', startStep3Recording);
+    }, STEP3_LONG_PRESS_MS);
+  }, [startStep3Recording, startStep3TimedAction, step3CameraTransform, step3Mode]);
+
+  const handleStep3PointerMove = useCallback((e) => {
+    if (step3Mode !== STEP3_MODE.LIVE || step3RecordingRef.current || step3RecordingStartingRef.current) return;
+    const moved = step3CameraTransform.handlePointerMove(e);
+    if (!moved) return;
+    step3PointerMovedRef.current = true;
+    clearTimeout(step3LongPressTimerRef.current);
+    step3LongPressTimerRef.current = null;
+  }, [step3CameraTransform, step3Mode]);
+
+  const handleStep3PointerUp = useCallback(async (e) => {
+    if (step3Mode !== STEP3_MODE.LIVE) return;
+    e.preventDefault();
+    const movedCamera = step3CameraTransform.handlePointerUp(e) || step3PointerMovedRef.current;
+    if (step3PointerIdRef.current !== null && e.pointerId !== step3PointerIdRef.current) {
+      step3PointerMovedRef.current = movedCamera;
+      return;
+    }
+    if (e.currentTarget.releasePointerCapture && e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // Ignore release races; the recording stop path below is what matters.
+      }
+    }
+    const shouldCapturePhoto = !!step3LongPressTimerRef.current;
+    step3PointerDownRef.current = false;
+    step3PointerIdRef.current = null;
+    step3PointerMovedRef.current = false;
+    clearTimeout(step3LongPressTimerRef.current);
+    step3LongPressTimerRef.current = null;
+
+    if (step3RecordingRef.current || step3RecordingStartingRef.current) {
+      stopStep3Recording();
+      return;
+    }
+    if (step3CountdownModeRef.current === 'video') {
+      cancelStep3Countdown();
+      return;
+    }
+    if (!shouldCapturePhoto || movedCamera) return;
+
+    const now = Date.now();
+    if (now - step3LastTapAtRef.current < STEP3_DOUBLE_TAP_MS) {
+      clearTimeout(step3TapCaptureTimerRef.current);
+      step3TapCaptureTimerRef.current = null;
+      step3LastTapAtRef.current = 0;
+      await resetStep3CameraTransform();
+      showToast('Camera view reset');
+      return;
+    }
+    step3LastTapAtRef.current = now;
+    clearTimeout(step3TapCaptureTimerRef.current);
+    step3TapCaptureTimerRef.current = setTimeout(() => {
+      step3LastTapAtRef.current = 0;
+      startStep3TimedAction('photo', completeStep3PhotoCapture);
+    }, STEP3_DOUBLE_TAP_MS);
+  }, [cancelStep3Countdown, completeStep3PhotoCapture, resetStep3CameraTransform, showToast, startStep3TimedAction, step3CameraTransform, step3Mode, stopStep3Recording]);
 
   const handleStep3PointerCancel = useCallback((e) => {
     if (step3Mode !== STEP3_MODE.LIVE) return;
     e.preventDefault();
-    if (step3PointerIdRef.current !== null && e.pointerId !== step3PointerIdRef.current) return;
+    const movedCamera = step3CameraTransform.handlePointerUp(e) || step3PointerMovedRef.current;
+    if (step3PointerIdRef.current !== null && e.pointerId !== step3PointerIdRef.current) {
+      step3PointerMovedRef.current = movedCamera;
+      return;
+    }
     if (e.currentTarget.releasePointerCapture && e.currentTarget.hasPointerCapture?.(e.pointerId)) {
       try {
         e.currentTarget.releasePointerCapture(e.pointerId);
@@ -1016,15 +1484,22 @@ export default function InviterPage() {
     }
     step3PointerDownRef.current = false;
     step3PointerIdRef.current = null;
+    step3PointerMovedRef.current = false;
     clearTimeout(step3LongPressTimerRef.current);
     step3LongPressTimerRef.current = null;
+    if (step3CountdownModeRef.current === 'video') cancelStep3Countdown();
     if (step3RecordingRef.current || step3RecordingStartingRef.current) {
       stopStep3Recording();
     }
-  }, [step3Mode, stopStep3Recording]);
+  }, [cancelStep3Countdown, step3CameraTransform, step3Mode, stopStep3Recording]);
 
   const enterStep3 = useCallback(async () => {
+    cancelStep3Countdown();
+    clearTimeout(step3TapCaptureTimerRef.current);
+    step3TapCaptureTimerRef.current = null;
+    step3LastTapAtRef.current = 0;
     exitCurrentTool(true);
+    await renderStep3ArtworkPlacement();
     stickerSys.closePanel();
     setSharePanelVisible(false);
     setScrimVisible(false);
@@ -1035,6 +1510,9 @@ export default function InviterPage() {
     step3VideoBlobRef.current = null;
     setSavedFramesVisible(false);
     setStep3Mode(STEP3_MODE.LIVE);
+    setStep3FlashEnabled(false);
+    setStep3ZoomMode(1);
+    step3CameraTransform.reset(step3FacingMode === 'user');
     setEditorVisible(false);
     setUndoRedoVisible(false);
     setUndoRedoOut(false);
@@ -1048,11 +1526,16 @@ export default function InviterPage() {
     if (canvasRef.current) canvasRef.current.classList.add('no-tool');
     if (stickerSys.stickerOverlayRef.current) stickerSys.stickerOverlayRef.current.style.pointerEvents = 'none';
     await delay(80);
-    await startStep3Camera();
-    showToast('Tap for photo. Hold for video.');
-  }, [exitCurrentTool, revokeStep3VideoUrl, setSharePanelVisible, showToast, startStep3Camera, stickerSys]);
+    const started = await startStep3Camera();
+    if (started) showToast('Tap for photo. Hold for video.');
+  }, [cancelStep3Countdown, exitCurrentTool, renderStep3ArtworkPlacement, revokeStep3VideoUrl, setSharePanelVisible, showToast, startStep3Camera,
+      step3CameraTransform, step3FacingMode, stickerSys]);
 
   const exitStep3ToEditor = useCallback(async () => {
+    cancelStep3Countdown();
+    clearTimeout(step3TapCaptureTimerRef.current);
+    step3TapCaptureTimerRef.current = null;
+    step3LastTapAtRef.current = 0;
     stopStep3Recording();
     stopStep3Camera();
     setStep3Recording(false);
@@ -1080,25 +1563,32 @@ export default function InviterPage() {
     setBottomBarOut(false);
     if (stickerSys.stickerOverlayRef.current) stickerSys.stickerOverlayRef.current.style.pointerEvents = '';
     if (canvasRef.current) canvasRef.current.classList.add('no-tool');
-  }, [revokeStep3VideoUrl, setToolsCollapsed, stickerSys, stopStep3Camera, stopStep3Recording,
-      toolsCollapsedRef, toolsCollapseTimerRef]);
+    renderS2GalleryPlacement();
+  }, [cancelStep3Countdown, revokeStep3VideoUrl, setToolsCollapsed, stickerSys, stopStep3Camera, stopStep3Recording,
+      toolsCollapsedRef, toolsCollapseTimerRef, renderS2GalleryPlacement]);
 
   const returnStep3ToLive = useCallback(async () => {
+    cancelStep3Countdown();
+    clearTimeout(step3TapCaptureTimerRef.current);
+    step3TapCaptureTimerRef.current = null;
+    step3LastTapAtRef.current = 0;
     if (activeToolRef.current) exitCurrentTool(true);
     setStep3PhotoUrl('');
     revokeStep3VideoUrl();
     setStep3VideoUrl('');
     step3VideoBlobRef.current = null;
     setStep3Mode(STEP3_MODE.LIVE);
+    setStep3FlashEnabled(false);
+    setStep3ZoomMode(1);
     setToolsVisible(false);
     setToolsOut(false);
     setBottomBarOut(false);
     if (canvasRef.current) canvasRef.current.classList.add('no-tool');
     if (stickerSys.stickerOverlayRef.current) stickerSys.stickerOverlayRef.current.style.pointerEvents = 'none';
     await delay(80);
-    await startStep3Camera();
-    showToast('Tap for photo. Hold for video.');
-  }, [exitCurrentTool, revokeStep3VideoUrl, showToast, startStep3Camera, stickerSys]);
+    const started = await startStep3Camera();
+    if (started) showToast('Tap for photo. Hold for video.');
+  }, [cancelStep3Countdown, exitCurrentTool, revokeStep3VideoUrl, showToast, startStep3Camera, stickerSys]);
 
   const handleStep3Back = useCallback(async () => {
     if (savedFramesVisible) {
@@ -1155,7 +1645,8 @@ export default function InviterPage() {
       ctx.clearRect(0, 0, width, height);
       ctx.drawImage(img, 0, 0, width, height);
       stickerSys.clearStickers();
-      mainUndoStackRef.current = [canvas.toDataURL()];
+      layerStack.clearLayers();
+      mainUndoStackRef.current = [snapshot()];
       mainRedoStackRef.current = [];
       syncHistoryBtns();
       closeSavedFrames();
@@ -1164,7 +1655,7 @@ export default function InviterPage() {
       console.warn('[step3] Saved frame load failed:', err);
       showToast('Could not load frame');
     }
-  }, [closeSavedFrames, getCanvasSize, mainRedoStackRef, mainUndoStackRef, showToast, stickerSys, syncHistoryBtns]);
+  }, [closeSavedFrames, getCanvasSize, layerStack, mainRedoStackRef, mainUndoStackRef, showToast, snapshot, stickerSys, syncHistoryBtns]);
 
   const handleSavedFrameDelete = useCallback((frameId) => {
     const next = loadSavedFrames().filter(frame => frame.id !== frameId);
@@ -1225,20 +1716,152 @@ export default function InviterPage() {
     await handleShare();
   }, [buildStep3PhotoBlob, buildStep3VideoBlob, frameName, handleShare, shareBlob, showToast, step3Mode]);
 
+  const handleStep3FlashToggle = useCallback(async () => {
+    if (!step3CameraReady) return;
+    const [track] = step3StreamRef.current?.getVideoTracks?.() || [];
+    const next = !step3FlashEnabled;
+    if (step3UsesHardwareTorch && track?.applyConstraints) {
+      try {
+        await track.applyConstraints({ advanced: [{ torch: next }] });
+      } catch (err) {
+        console.warn('[step3] Torch unavailable, using screen flash:', err);
+        setStep3CameraCapabilities(prev => ({ ...prev, torch: false }));
+        showToast('Using screen flash');
+      }
+    }
+    setStep3FlashEnabled(next);
+    if (!next) setStep3ScreenFlashActive(false);
+  }, [showToast, step3CameraReady, step3FlashEnabled, step3UsesHardwareTorch]);
+
+  const handleStep3TimerToggle = useCallback(() => {
+    const index = STEP3_TIMER_STEPS.indexOf(step3TimerSeconds);
+    const next = STEP3_TIMER_STEPS[(index + 1) % STEP3_TIMER_STEPS.length];
+    setStep3TimerSeconds(next);
+    showToast(next ? `${next}s timer` : 'Timer off');
+  }, [showToast, step3TimerSeconds]);
+
+  const handleStep3FlipCamera = useCallback(async () => {
+    const next = step3FacingMode === 'environment' ? 'user' : 'environment';
+    setStep3FacingMode(next);
+    step3CameraTransform.setMirror(next === 'user');
+    setStep3FlashEnabled(false);
+    setStep3ScreenFlashActive(false);
+    await startStep3Camera(next);
+  }, [startStep3Camera, step3CameraTransform, step3FacingMode]);
+
+  const handleStep3Zoom = useCallback(async (zoom) => {
+    await applyStep3HardwareZoom(zoom);
+  }, [applyStep3HardwareZoom]);
+
   const handleSavedFramesCopyLink = useCallback(async () => {
     setSavedFramesVisible(false);
     await handleCopyLink();
   }, [handleCopyLink]);
 
+  const canHandleS2GalleryGesture = useCallback(() => (
+    s2GalleryAdjustable
+    && !step3Mode
+    && editorVisible
+    && !activeToolRef.current
+    && !textToolActive
+    && !sharePanelVisible
+    && !savedFramesVisible
+    && !editNameVisible
+    && !confirmVisible
+    && !stickerSys.stickerPanelVisible
+  ), [
+    confirmVisible,
+    editNameVisible,
+    editorVisible,
+    s2GalleryAdjustable,
+    savedFramesVisible,
+    sharePanelVisible,
+    step3Mode,
+    stickerSys.stickerPanelVisible,
+    textToolActive,
+  ]);
+
+  const handleS2GalleryPointerDown = useCallback((e) => {
+    const target = e.target;
+    if (!target.closest?.('.placed-sticker, .placed-text, .placed-photo')) {
+      stickerSys.deselectAllStickers?.();
+    }
+    if (!canHandleS2GalleryGesture()) return;
+    e.preventDefault();
+    if (!s2GalleryGestureActiveRef.current && s2GalleryTransform.getActivePointerCount() > 0) {
+      s2GalleryTransform.cancel();
+    }
+    s2GalleryGestureActiveRef.current = true;
+    s2GalleryGestureMovedRef.current = false;
+    if (e.currentTarget.setPointerCapture) {
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Pointer capture is best-effort for Safari/WebKit.
+      }
+    }
+    s2GalleryTransform.handlePointerDown(e);
+  }, [canHandleS2GalleryGesture, s2GalleryTransform, stickerSys]);
+
+  const handleS2GalleryPointerMove = useCallback((e) => {
+    if (!s2GalleryGestureActiveRef.current || !canHandleS2GalleryGesture()) return;
+    e.preventDefault();
+    const moved = s2GalleryTransform.handlePointerMove(e);
+    if (moved) s2GalleryGestureMovedRef.current = true;
+  }, [canHandleS2GalleryGesture, s2GalleryTransform]);
+
+  const handleS2GalleryPointerUp = useCallback((e) => {
+    if (!s2GalleryGestureActiveRef.current && s2GalleryTransform.getActivePointerCount() === 0) return;
+    e.preventDefault();
+    const moved = s2GalleryTransform.handlePointerUp(e) || s2GalleryGestureMovedRef.current;
+    if (e.currentTarget.releasePointerCapture && e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // Pointer capture is best-effort for Safari/WebKit.
+      }
+    }
+    if (moved) {
+      renderS2GalleryPlacement();
+    }
+    if (s2GalleryTransform.getActivePointerCount() === 0) {
+      s2GalleryGestureActiveRef.current = false;
+      s2GalleryGestureMovedRef.current = false;
+    } else {
+      s2GalleryGestureMovedRef.current = moved;
+    }
+  }, [renderS2GalleryPlacement, s2GalleryTransform]);
+
+  const handleS2GalleryPointerCancel = useCallback((e) => {
+    if (!s2GalleryGestureActiveRef.current) return;
+    e.preventDefault();
+    const moved = s2GalleryTransform.cancel() || s2GalleryGestureMovedRef.current;
+    if (moved) {
+      renderS2GalleryPlacement();
+    }
+    s2GalleryGestureActiveRef.current = false;
+    s2GalleryGestureMovedRef.current = false;
+  }, [renderS2GalleryPlacement, s2GalleryTransform]);
+
+  useEffect(() => {
+    if (!s2GalleryAdjustable || !s2GalleryImageRef.current) return;
+    renderS2GalleryPlacement();
+  }, [renderS2GalleryPlacement, s2GalleryAdjustable, s2GalleryTransform.transform]);
+
   useEffect(() => {
     if (step3Mode !== STEP3_MODE.LIVE) return undefined;
 
     const stopActiveRecording = () => {
-      if (!step3RecordingRef.current && !step3RecordingStartingRef.current) return;
+      if (
+        !step3RecordingRef.current
+        && !step3RecordingStartingRef.current
+        && step3CountdownModeRef.current !== 'video'
+      ) return;
       step3PointerDownRef.current = false;
       step3PointerIdRef.current = null;
       clearTimeout(step3LongPressTimerRef.current);
       step3LongPressTimerRef.current = null;
+      if (step3CountdownModeRef.current === 'video') cancelStep3Countdown();
       stopStep3Recording();
     };
     const stopOnVisibilityChange = () => {
@@ -1262,7 +1885,11 @@ export default function InviterPage() {
       document.removeEventListener('visibilitychange', stopOnVisibilityChange);
       window.removeEventListener('blur', stopActiveRecording);
     };
-  }, [step3Mode, stopStep3Recording]);
+  }, [cancelStep3Countdown, step3Mode, stopStep3Recording]);
+
+  useEffect(() => {
+    step3CameraTransform.setMirror(step3FacingMode === 'user');
+  }, [step3CameraTransform.setMirror, step3FacingMode]);
 
   useEffect(() => {
     if (!step3Recording) {
@@ -1288,7 +1915,10 @@ export default function InviterPage() {
       stopStep3Camera();
       revokeStep3VideoUrl();
       clearTimeout(step3LongPressTimerRef.current);
+      clearTimeout(step3TapCaptureTimerRef.current);
+      clearTimeout(step3FlashTimerRef.current);
       clearTimeout(step3RecordStopTimerRef.current);
+      step3CountdownTimersRef.current.forEach(timer => clearTimeout(timer));
       cancelAnimationFrame(step3RecordRafRef.current);
     };
   }, [revokeStep3VideoUrl, stopStep3Camera, stopStep3Recording]);
@@ -1297,18 +1927,15 @@ export default function InviterPage() {
     if (galleryInputRef.current) galleryInputRef.current.click();
   }, []);
 
-  const handleProceedToStep3 = useCallback(() => {
-    enterStep3();
-  }, [enterStep3]);
+  const handleProceedToStep3 = useCallback(async () => {
+    await finalizeS2LiveDecoratorsToCanvas(true);
+    await enterStep3();
+  }, [enterStep3, finalizeS2LiveDecoratorsToCanvas]);
 
-  const handleToolDownload = useCallback(() => {
-    exitCurrentTool(true);
-    if (stickerSys.placedStickersRef.current.length > 0) {
-      stickerSys.commitStickersToCanvas();
-      pushHistory();
-    }
+  const handleToolDownload = useCallback(async () => {
+    await finalizeS2LiveDecoratorsToCanvas(true);
     try {
-      const dataURL = canvasRef.current.toDataURL('image/png');
+      const dataURL = await buildFrameDataUrl();
       const a = document.createElement('a');
       const name = (frameName.trim() || 'retake-frame').replace(/[^a-z0-9\-_]/gi, '-').toLowerCase();
       a.download = name + '.png'; a.href = dataURL; a.click();
@@ -1316,49 +1943,102 @@ export default function InviterPage() {
     } catch(e) {
       showToast('Unable to save — try from a server');
     }
-  }, [exitCurrentTool, stickerSys, pushHistory, frameName, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [buildFrameDataUrl, finalizeS2LiveDecoratorsToCanvas, frameName, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleGalleryChange = useCallback(async (e) => {
-    const file = e.target.files[0];
+  const placePhotoFile = useCallback(async (file) => {
     if (!file) { introPhotoFlowRef.current = false; return; }
     const url = URL.createObjectURL(file);
     const newImg = new Image();
     newImg.onload = async () => {
       const canvas = canvasRef.current, ctx = ctxRef.current;
       const W = canvas.width, H = canvas.height;
-      const scale = Math.max(W / newImg.width, H / newImg.height);
-      const sw = W / scale, sh = H / scale;
+      const fallback = getComputedStyle(document.documentElement)
+        .getPropertyValue('--color-canvas')
+        .trim() || '#F7F5F2';
+      const backgroundColor = getAverageImageColor(newImg, fallback);
+      s2GalleryImageRef.current = newImg;
+      s2GalleryBackgroundRef.current = backgroundColor || fallback;
+      s2GalleryTransform.reset(false);
+      setS2GalleryAdjustable(true);
+      if (introPhotoFlowRef.current && !editorVisible) {
+        stickerSys.clearStickers();
+        layerStack.clearLayers();
+      }
       ctx.clearRect(0, 0, W, H);
-      ctx.drawImage(newImg, (newImg.width-sw)/2, (newImg.height-sh)/2, sw, sh, 0, 0, W, H);
-      mainUndoStackRef.current = [canvas.toDataURL()];
+      renderS2GalleryPlacement();
+      mainUndoStackRef.current = [snapshot()];
       mainRedoStackRef.current = [];
       syncHistoryBtns();
       URL.revokeObjectURL(url);
       if (introPhotoFlowRef.current) { introPhotoFlowRef.current = false; await enterEditor(); }
+      showToast('Use two fingers to adjust photo');
     };
     newImg.src = url;
-    e.target.value = '';
-  }, [syncHistoryBtns, enterEditor, mainUndoStackRef, mainRedoStackRef]);
+  }, [editorVisible, enterEditor, layerStack, mainRedoStackRef, mainUndoStackRef, renderS2GalleryPlacement, s2GalleryTransform, showToast, snapshot, stickerSys, syncHistoryBtns]);
 
-  const handleChoosePhoto = useCallback(() => {
+  const handleGalleryChange = useCallback(async (e) => {
+    await placePhotoFile(e.target.files[0]);
+    e.target.value = '';
+  }, [placePhotoFile]);
+
+  const handleChoosePhoto = useCallback(async () => {
     introPhotoFlowRef.current = true;
+    if (window.showOpenFilePicker) {
+      try {
+        const [fileHandle] = await window.showOpenFilePicker({
+          multiple: false,
+          excludeAcceptAllOption: true,
+          types: [{
+            description: 'Images',
+            accept: {
+              'image/*': ['.avif', '.gif', '.heic', '.heif', '.jpeg', '.jpg', '.png', '.webp'],
+            },
+          }],
+        });
+        if (fileHandle) {
+          await placePhotoFile(await fileHandle.getFile());
+          return;
+        }
+      } catch (err) {
+        if (err?.name === 'AbortError') {
+          introPhotoFlowRef.current = false;
+          return;
+        }
+      }
+    }
     if (galleryInputRef.current) galleryInputRef.current.click();
+  }, [placePhotoFile]);
+
+  const handleTakePhoto = useCallback(() => {
+    introPhotoFlowRef.current = true;
+    if (cameraInputRef.current) cameraInputRef.current.click();
   }, []);
 
   const handleStartBlank = useCallback(async () => {
     introPhotoFlowRef.current = false;
+    s2GalleryImageRef.current = null;
+    setS2GalleryAdjustable(false);
     const ctx = ctxRef.current, canvas = canvasRef.current;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    mainUndoStackRef.current = [canvas.toDataURL()];
+    const galleryCanvas = s2GalleryCanvasRef.current;
+    const galleryCtx = galleryCanvas?.getContext('2d');
+    galleryCtx?.clearRect(0, 0, galleryCanvas.width, galleryCanvas.height);
+    stickerSys.clearStickers();
+    layerStack.clearLayers();
+    mainUndoStackRef.current = [snapshot()];
     mainRedoStackRef.current = [];
     syncHistoryBtns();
     await enterEditor();
-  }, [syncHistoryBtns, enterEditor, mainUndoStackRef, mainRedoStackRef]);
+  }, [syncHistoryBtns, enterEditor, layerStack, mainUndoStackRef, mainRedoStackRef, snapshot, stickerSys]);
 
   const handleExitBtn = useCallback(async () => {
     if (step3Mode) {
       const ok = await showConfirm('Leave camera preview?', 'Leave', true);
       if (!ok) return;
+      cancelStep3Countdown();
+      clearTimeout(step3TapCaptureTimerRef.current);
+      step3TapCaptureTimerRef.current = null;
+      step3LastTapAtRef.current = 0;
       stopStep3Recording();
       stopStep3Camera();
       revokeStep3VideoUrl();
@@ -1374,7 +2054,7 @@ export default function InviterPage() {
       if (!ok) return;
     }
     await exitToIntro();
-  }, [exitToIntro, mainUndoStackRef, revokeStep3VideoUrl, showConfirm, step3Mode, stopStep3Camera, stopStep3Recording]);
+  }, [cancelStep3Countdown, exitToIntro, mainUndoStackRef, revokeStep3VideoUrl, showConfirm, step3Mode, stopStep3Camera, stopStep3Recording]);
 
   const handleScrimClick = useCallback(() => {
     if (editNameVisible) { saveEditName(); return; }
@@ -1383,16 +2063,31 @@ export default function InviterPage() {
     if (stickerSys.stickerPanelVisible) stickerSys.closePanel();
   }, [closeSavedFrames, editNameVisible, saveEditName, savedFramesVisible, sharePanelVisible, setSharePanelVisible, stickerSys]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleEraserOpacityInput = useCallback((e) => {
-    eraserOpacityRef.current = parseInt(e.target.value) / 100;
-    const val = e.target.value;
-    e.target.style.setProperty('--fill', val + '%');
-    document.getElementById('eraserOpacityVal').textContent = val + '%';
-  }, []);
-
   const handleSwatchClick = useCallback((color) => {
     doodleColorRef.current = color;
     setDoodleColor(color);
+    syncCursor();
+  }, [syncCursor]);
+
+  const handleColorPickerChange = useCallback((e) => {
+    const color = e.target.value.toUpperCase();
+    doodleColorRef.current = color;
+    setDoodleColor(color);
+    syncCursor();
+  }, [syncCursor]);
+
+  const handleDoodleModeClick = useCallback((mode) => {
+    doodleModeRef.current = mode;
+    setDoodleMode(mode);
+    if (canvasRef.current) canvasRef.current.style.cursor = 'crosshair';
+    syncCursor();
+  }, [syncCursor]);
+
+  const handleDoodleOpacityInput = useCallback((e) => {
+    const value = Math.max(5, Math.min(100, Number(e.target.value) || 100));
+    doodleOpacityRef.current = value;
+    setDoodleOpacity(value);
+    e.target.style.setProperty('--fill', `${value}%`);
     syncCursor();
   }, [syncCursor]);
 
@@ -1401,28 +2096,13 @@ export default function InviterPage() {
     setPenType(type);
   }, []);
 
-  const handleEraserShapeClick = useCallback((shape) => {
-    eraserModeRef.current = shape;
-    setEraserMode(shape);
-    if (shape === 'freehand') {
-      resetMagicMode();
-      if (canvasRef.current) canvasRef.current.style.cursor = 'none';
-    } else if (shape === 'magic') {
-      resetMagicMode();
-      if (canvasRef.current) canvasRef.current.style.cursor = 'crosshair';
-      if (brushCursorRef.current) brushCursorRef.current.style.display = 'none';
-    } else {
-      resetMagicMode();
-      if (canvasRef.current) canvasRef.current.style.cursor = 'crosshair';
-      if (brushCursorRef.current) brushCursorRef.current.style.display = 'none';
-    }
-  }, [resetMagicMode]);
-
   const isStep3 = step3Mode !== null;
   const isStep3Live = step3Mode === STEP3_MODE.LIVE;
   const isStep3PhotoReview = step3Mode === STEP3_MODE.PHOTO;
   const isStep3VideoReview = step3Mode === STEP3_MODE.VIDEO;
   const isStep3Review = isStep3PhotoReview || isStep3VideoReview;
+  const isStep3Countdown = step3CountdownValue !== null;
+  const isStep3CaptureBusy = step3Recording || isStep3Countdown;
   const flowState = sharePanelVisible
     ? INVITER_FLOW_STATES.SHARING
     : savedFramesVisible
@@ -1446,15 +2126,28 @@ export default function InviterPage() {
         canvasRef={canvasRef}
         selectionCanvasRef={selectionCanvasRef}
         frameElRef={frameElRef}
+        frameClassName={s2GalleryAdjustable && !isStep3 ? 's2-gallery-adjusting' : ''}
+        onPointerDown={handleS2GalleryPointerDown}
+        onPointerMove={handleS2GalleryPointerMove}
+        onPointerUp={handleS2GalleryPointerUp}
+        onPointerCancel={handleS2GalleryPointerCancel}
         brushCursorRef={brushCursorRef}
         brushCursorSvgRef={brushCursorSvgRef}
         brushCursorCircleRef={brushCursorCircleRef}
         frameScrimVisible={frameScrimVisible}
       >
+        <canvas
+          id="s2GalleryCanvas"
+          ref={s2GalleryCanvasRef}
+          width="414"
+          height="736"
+          aria-hidden="true"
+        />
         {isStep3 && (
           <div
             className={`step3-media-layer step3-media-layer--${step3Mode}${step3Recording ? ' is-recording' : ''}`}
             onPointerDown={handleStep3PointerDown}
+            onPointerMove={handleStep3PointerMove}
             onPointerUp={handleStep3PointerUp}
             onPointerCancel={handleStep3PointerCancel}
           >
@@ -1466,8 +2159,13 @@ export default function InviterPage() {
                   autoPlay
                   playsInline
                   muted
+                  style={step3CameraTransform.style}
                 />
-                {!step3CameraReady && <div className="step3-camera-fallback">Camera preview</div>}
+                {!step3CameraReady && (
+                  <div className="step3-camera-fallback">
+                    {step3CameraIssue || 'Camera preview'}
+                  </div>
+                )}
               </>
             )}
             {isStep3PhotoReview && step3PhotoUrl && (
@@ -1503,7 +2201,41 @@ export default function InviterPage() {
         </svg>
       )}
 
-      {!step3Recording && (
+      {isStep3Countdown && (
+        <div className="step3-countdown-overlay" aria-live="polite">
+          {step3CountdownValue}
+        </div>
+      )}
+
+      {isStep3Live && (
+        <div
+          className={[
+            'step3-screen-flash',
+            step3ScreenFlashActive || (step3Recording && step3UsesScreenFlash) ? 'visible' : '',
+            step3Recording && step3UsesScreenFlash ? 'recording' : '',
+          ].filter(Boolean).join(' ')}
+          aria-hidden="true"
+        />
+      )}
+
+      <Step3CameraControls
+        visible={isStep3Live && !isStep3CaptureBusy}
+        flashAvailable={step3CameraReady}
+        flashEnabled={step3FlashEnabled}
+        timerSeconds={step3TimerSeconds}
+        onFlash={handleStep3FlashToggle}
+        onTimer={handleStep3TimerToggle}
+        onFlip={handleStep3FlipCamera}
+      />
+
+      <Step3ZoomControl
+        visible={isStep3Live && !isStep3CaptureBusy}
+        zoomOptions={step3ZoomOptions}
+        zoomMode={step3ZoomMode}
+        onZoom={handleStep3Zoom}
+      />
+
+      {!isStep3CaptureBusy && (
         <ExitButton
           visible={exitBtnVisible}
           out={exitBtnOut}
@@ -1533,7 +2265,7 @@ export default function InviterPage() {
             onToolText={handleToolText}
             onToolStickers={handleToolStickers}
             onToolDoodle={handleToolDoodle}
-            onToolEraser={handleToolEraser}
+            onToolMagicPen={handleToolMagicPen}
             onToolDownload={handleToolDownload}
             onToggle={handleToggleTools}
             onInteraction={handleToolbarInteraction}
@@ -1545,8 +2277,6 @@ export default function InviterPage() {
             visible={bottomBarVisible}
             out={bottomBarOut}
             frameName={frameName}
-            galleryInputRef={galleryInputRef}
-            onGalleryChange={handleGalleryChange}
             onGalleryClick={handleBgGallery}
             onEditName={openEditName}
             onProceed={handleProceedToStep3}
@@ -1554,7 +2284,7 @@ export default function InviterPage() {
         </>
       )}
 
-      {isStep3Review && !step3Recording && (
+      {isStep3Review && !isStep3CaptureBusy && (
         <VerticalToolbar
           visible={toolsVisible}
           out={toolsOut}
@@ -1565,7 +2295,7 @@ export default function InviterPage() {
           onToolText={handleToolText}
           onToolStickers={handleToolStickers}
           onToolDoodle={handleToolDoodle}
-          onToolEraser={() => {}}
+          onToolMagicPen={() => {}}
           onToolDownload={handleStep3SaveRetake}
           onToggle={handleToggleTools}
           onInteraction={handleToolbarInteraction}
@@ -1574,7 +2304,7 @@ export default function InviterPage() {
         />
       )}
 
-      {isStep3 && !step3Recording && (
+      {isStep3 && !isStep3CaptureBusy && (
         <GlassSurface className={`step3-bottom-bar visible${bottomBarOut ? ' out' : ''}`} id="step3BottomBar">
           <SolidIconButton
             className={isStep3Review ? 'step3-retake-btn' : 'step3-circle-btn'}
@@ -1617,6 +2347,8 @@ export default function InviterPage() {
         tmLeftIn={tmLeftIn}
         tmPenBarIn={tmBarMode === 'doodle'}
         doodleColor={doodleColor}
+        doodleMode={doodleMode}
+        doodleOpacity={doodleOpacity}
         penType={penType}
         tmUndoBtnDisabled={tmUndoBtnDisabled}
         tmRedoBtnDisabled={tmRedoBtnDisabled}
@@ -1624,28 +2356,13 @@ export default function InviterPage() {
         onUndo={toolUndo}
         onRedo={toolRedo}
         onSwatchClick={handleSwatchClick}
+        onDoodleModeClick={handleDoodleModeClick}
+        onColorPickerChange={handleColorPickerChange}
+        onDoodleOpacityInput={handleDoodleOpacityInput}
         onPenTypeClick={handlePenTypeClick}
       />
 
-      <EraserBar
-        active={!isStep3 && tmBarMode === 'eraser'}
-        eraserMode={eraserMode}
-        eraserOpacitySliderRef={eraserOpacitySliderRef}
-        magicPhase={magicPhase}
-        magicConfirmDisabled={magicConfirmDisabled}
-        magicDetecting={magicDetecting}
-        magicRefMode={magicRefMode}
-        magicOpacity={magicOpacity}
-        onShapeClick={handleEraserShapeClick}
-        onOpacityInput={handleEraserOpacityInput}
-        onMagicBack={() => handleEraserShapeClick('freehand')}
-        onMagicConfirm={confirmMagicLasso}
-        onMagicRefMode={handleMagicRefMode}
-        onMagicOpacityInput={handleMagicOpacityInput}
-        onMagicApply={applyMagicErase}
-      />
-
-      {!step3Recording && (
+      {!isStep3CaptureBusy && (
         <Toast className="s6-toast" id="toast" visible={toastVisible}>{toastMsg}</Toast>
       )}
 
@@ -1690,7 +2407,18 @@ export default function InviterPage() {
 
       <div className={`scrim${scrimVisible ? ' visible' : ''}`} id="scrim" onClick={handleScrimClick} />
 
-      <IntroCard visible={introCardVisible} onChoosePhoto={handleChoosePhoto} onStartBlank={handleStartBlank} />
+      <PhotoInputs
+        galleryInputRef={galleryInputRef}
+        cameraInputRef={cameraInputRef}
+        onPhotoChange={handleGalleryChange}
+      />
+
+      <IntroCard
+        visible={introCardVisible}
+        onChoosePhoto={handleChoosePhoto}
+        onTakePhoto={handleTakePhoto}
+        onStartBlank={handleStartBlank}
+      />
 
       <ConfirmDialog
         confirmScrimVisible={confirmScrimVisible}

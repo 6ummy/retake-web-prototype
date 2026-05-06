@@ -8,7 +8,7 @@ const TOOL_META = {
   text: { id: 'btnToolText', icon: 'text', label: 'Text', activeTool: 'text' },
   stickers: { id: 'btnToolStickers', icon: 'stickers', label: 'Stickers' },
   doodle: { id: 'btnToolDoodle', icon: 'draw', label: 'Draw', activeTool: 'doodle' },
-  eraser: { id: 'btnToolEraser', icon: 'eraser', label: 'Eraser', activeTool: 'eraser' },
+  magicPen: { id: 'btnToolMagicPen', icon: 'magicPen', label: 'Magic Pen', activeTool: 'magicPen' },
   download: { id: 'btnToolDownload', icon: 'save', label: 'Save' },
 };
 
@@ -22,7 +22,7 @@ export default function VerticalToolbar({
   onToolText,
   onToolStickers,
   onToolDoodle,
-  onToolEraser,
+  onToolMagicPen,
   onToolDownload,
   onToggle,
   onInteraction,
@@ -33,7 +33,7 @@ export default function VerticalToolbar({
     text: onToolText,
     stickers: onToolStickers,
     doodle: onToolDoodle,
-    eraser: onToolEraser,
+    magicPen: onToolMagicPen,
     download: onToolDownload,
   };
 

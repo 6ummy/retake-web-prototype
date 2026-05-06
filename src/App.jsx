@@ -2,8 +2,11 @@ import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import InviterPage from './features/inviter/InviterPage.jsx';
 import InviteePage from './features/invitee/InviteePage.jsx';
+import usePreventBrowserZoom from './hooks/usePreventBrowserZoom.js';
 
 export default function App() {
+  usePreventBrowserZoom();
+
   return (
     <BrowserRouter>
       <Routes>

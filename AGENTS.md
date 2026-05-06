@@ -5,6 +5,7 @@
 - Before any UI, styling, component, layout, animation, or design-system change, read `docs/design-system.md`.
 - Treat `docs/design-system.md` as the source of truth for Retake's product identity, CSS layers, tokens, and component usage.
 - Preserve the current Retake language: mobile-first, camera-forward, playful, tool-like, glass tool chrome, solid yellow brand moments, Bedstead display type, dark ink text, canvas/editor controls, stickers, and fast motion.
+- I am currently using safari to test prototype on my mobile device using this link. Show prototype updates here : https://192.168.0.72:5174/ 
 
 ## Project Shape
 

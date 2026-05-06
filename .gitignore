@@ -1,4 +1,7 @@
 .DS_Store
 .claude/
+.cert/
 archive/
 dist/
+public/retake-local-ca.crt
+public/retake-local-ca.cer

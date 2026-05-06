@@ -164,3 +164,113 @@
 .control-pill--danger:not(:disabled):active {
   background: rgba(255, 59, 48, 0.96);
 }
+
+.tool-panel-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+}
+
+.tool-panel-segment {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 3px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.tool-panel-segment-btn {
+  width: 38px;
+  height: 34px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.42);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  transition: background var(--motion-fast), color var(--motion-fast), opacity var(--motion-fast), transform 0.1s ease;
+}
+
+.tool-panel-segment-btn.active {
+  background: var(--glass-bg);
+  color: var(--glass-icon-color);
+}
+
+.tool-panel-segment-btn:active {
+  opacity: 0.72;
+  transform: scale(0.94);
+}
+
+.tool-panel-segment-btn .tool-icon-frame {
+  width: 24px;
+  height: 24px;
+}
+
+.tool-panel-colors {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+}
+
+.tool-panel-color-btn,
+.tool-panel-color-picker {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2.5px solid transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45);
+  transition: transform var(--motion-fast), border-color var(--motion-fast);
+}
+
+.tool-panel-color-btn:active,
+.tool-panel-color-picker:active {
+  transform: scale(0.82);
+}
+
+.tool-panel-color-btn.active,
+.tool-panel-color-picker.active {
+  border-color: var(--color-white);
+  transform: scale(1.15);
+}
+
+.tool-panel-color-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    linear-gradient(45deg, rgba(255,255,255,0.36) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255,255,255,0.36) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.36) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.36) 75%);
+  background-color: rgba(255, 255, 255, 0.12);
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+  background-size: 8px 8px;
+}
+
+.tool-panel-color-picker-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.36);
+}
+
+.tool-panel-color-picker input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}

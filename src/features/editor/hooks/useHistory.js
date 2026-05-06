@@ -1,6 +1,13 @@
 import { useState, useRef, useCallback } from 'react';
 
-export function useHistory({ canvasRef, ctxRef, activeToolRef, showToast }) {
+export function useHistory({
+  canvasRef,
+  ctxRef,
+  activeToolRef,
+  showToast,
+  createSnapshot: createCustomSnapshot,
+  restoreSnapshot: restoreCustomSnapshot,
+}) {
   const mainUndoStackRef = useRef([]);
   const mainRedoStackRef = useRef([]);
   const toolUndoStackRef = useRef([]);
@@ -13,10 +20,12 @@ export function useHistory({ canvasRef, ctxRef, activeToolRef, showToast }) {
   const [tmRedoBtnDisabled, setTmRedoBtnDisabled] = useState(true);
 
   const snapshot = useCallback(() => {
+    if (createCustomSnapshot) return createCustomSnapshot();
     try { return canvasRef.current.toDataURL(); } catch(e) { return null; }
-  }, [canvasRef]);
+  }, [canvasRef, createCustomSnapshot]);
 
   const restoreSnapshot = useCallback((url) => {
+    if (restoreCustomSnapshot) return restoreCustomSnapshot(url);
     if (!url) return Promise.resolve();
     return new Promise(res => {
       const i = new Image();

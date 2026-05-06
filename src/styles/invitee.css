@@ -39,7 +39,7 @@ body {
   object-fit: cover;
   opacity: 0;
   transition: opacity 0.7s ease;
-  z-index: 2;
+  z-index: var(--z-live-media);
   pointer-events: none;
   transform: scaleX(-1); /* mirror for selfie mode */
 }
@@ -58,7 +58,7 @@ body {
   border-radius: 0;
   object-fit: cover;
   pointer-events: none;
-  z-index: 3;
+  z-index: var(--z-frame-art);
 }
 
 
@@ -76,7 +76,7 @@ body {
   justify-content: center;
   will-change: transform, opacity;
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--z-frame-scrim);
 
   /* 1 hover bob (둥 한번) → flyaway immediately after */
   animation-name:            logo-hover,  logo-flyaway;
@@ -117,7 +117,7 @@ body {
   transform: translate(-50%, -48%) scale(0.88);
   opacity: 0;
   pointer-events: none;
-  z-index: 11;
+  z-index: var(--z-sheet);
   background: var(--surface-brand-bg);
   border-radius: var(--radius-card);
   padding: 28px 28px 28px;
@@ -192,7 +192,7 @@ body {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.3s ease;
-  z-index: 10;
+  z-index: var(--z-overlay-scrim);
 }
 .scrim.visible { opacity: 1; pointer-events: auto; }
 
@@ -207,7 +207,7 @@ body {
   overflow: hidden;
   transform: translateY(100%);
   transition: transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
-  z-index: 11;
+  z-index: var(--z-sheet);
 }
 .bottom-sheet.visible { transform: translateY(0); }
 
@@ -330,7 +330,7 @@ body {
   transform: translate(-50%, 100vh);
   opacity: 0;
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--z-sheet);
 
   width: 368px;
   background: #FFFFFF;
@@ -403,7 +403,7 @@ body {
   justify-content: flex-start;
   align-items: center;
   gap: 111px;
-  z-index: 6;
+  z-index: var(--z-editor-chrome);
   opacity: 0;
   transform: translateY(-16px);
   transition: opacity 0.4s ease, transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
@@ -456,9 +456,10 @@ body {
   left: 0; top: 0;
   width: 414px; height: 750px;
   overflow: hidden;
-  z-index: 2;
+  z-index: var(--z-live-media);
   display: none;
   pointer-events: none;
+  background: var(--color-ink);
 }
 .photo-container.active {
   display: block;
@@ -467,8 +468,7 @@ body {
 .photo-overlay {
   position: absolute;
   left: 50%; top: 50%;
-  width: 100%; height: 100%;
-  object-fit: cover;
+  width: 100%; height: auto;
   /* JS always writes: translate(-50%,-50%) scale(s) rotate(r) */
   transform: translate(-50%, -50%) scaleX(-1); /* mirror to match selfie camera */
   transform-origin: center center;
@@ -488,7 +488,7 @@ body {
     rgba(0,0,0,0.22) 50%,
     rgba(0,0,0,0)    100%
   );
-  z-index: 5;
+  z-index: var(--z-frame-scrim);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.5s ease;
@@ -535,7 +535,7 @@ body {
   border-radius: 0;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  z-index: 7;
+  z-index: var(--z-recording-indicator);
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.22s ease;
@@ -569,7 +569,7 @@ body {
   background: white;
   opacity: 0;
   pointer-events: none;
-  z-index: 9;
+  z-index: var(--z-recording-indicator);
 }
 
 /* Drop-shadow on all icons + text inside cam-btns for light-bg legibility.
@@ -588,7 +588,7 @@ body {
   position: absolute;
   top: 50%; left: 50%;
   transform: translate(-50%, calc(-50% + 12px));
-  z-index: 9;
+  z-index: var(--z-toast);
 }
 .cam-popup.visible { opacity: 1; transform: translate(-50%, -50%); }
 
@@ -599,7 +599,7 @@ body {
   transform: translate(-50%, -50%);
   display: flex; flex-direction: column;
   align-items: center; gap: 28px;
-  z-index: 9; pointer-events: none;
+  z-index: var(--z-recording-indicator); pointer-events: none;
   opacity: 0;
   transition: opacity 0.5s ease;
 }
@@ -655,7 +655,7 @@ body {
   display: flex;
   gap: 10px;
   align-items: center;
-  z-index: 6;
+  z-index: var(--z-editor-chrome);
   opacity: 0;
   transition: opacity 0.45s ease, transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
   pointer-events: none;
@@ -728,7 +728,7 @@ body {
   border-radius: 0;
   background: #1A1A2E;
   opacity: 0; pointer-events: none;
-  z-index: 9;
+  z-index: var(--z-recording-indicator);
 }
 
 /* ── S6 edge gradient scrim — keeps buttons readable on any photo ── */
@@ -742,7 +742,7 @@ body {
   background:
     linear-gradient(to top, rgba(0,0,0,0.52) 0%, rgba(0,0,0,0.22) 12%, rgba(0,0,0,0) 24%);
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--z-frame-scrim);
   opacity: 0;
   transition: opacity 0.35s ease;
 }
@@ -761,7 +761,7 @@ body {
   box-shadow: var(--glass-shadow);
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; z-index: 6;
+  cursor: pointer; z-index: var(--z-editor-chrome);
   opacity: 0; transform: translateY(-16px);
   transition: opacity 0.32s ease, transform 0.38s cubic-bezier(0.22,1,0.36,1);
   pointer-events: none;
@@ -775,7 +775,7 @@ body {
   position: absolute;
   right: 20px; top: 89px;
   display: flex; flex-direction: column; gap: 4px;
-  z-index: 6;
+  z-index: var(--z-editor-chrome);
   opacity: 0; transform: translateX(22px);
   transition: opacity 0.32s ease, transform 0.38s cubic-bezier(0.22,1,0.36,1);
   pointer-events: none;
@@ -817,15 +817,9 @@ body {
 #editCanvas {
   position: absolute; left: 0; top: 0;
   width: 414px; height: 750px;
-  z-index: 3; cursor: none; touch-action: none;
+  z-index: var(--z-edit-canvas); cursor: crosshair; touch-action: none;
 }
 #editCanvas.no-tool { cursor: default; pointer-events: none; }
-
-/* ── Brush cursor ── */
-#brushCursor {
-  position: absolute; pointer-events: none; z-index: 10;
-  transform: translate(-50%, -50%); display: none;
-}
 
 /* ── Tool-mode shared transition base ── */
 .tool-mode-el {
@@ -848,7 +842,7 @@ body {
 #tmUndoRedo {
   position: absolute; left: 50%; top: 89px;
   transform: translateX(-50%) translateY(-14px);
-  display: flex; gap: 4px; z-index: 8;
+  display: flex; gap: 4px; z-index: var(--z-tool-mode);
 }
 #tmUndoRedo.tm-in { transform: translateX(-50%) translateY(0); }
 
@@ -863,7 +857,7 @@ body {
   box-shadow: var(--glass-shadow);
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; z-index: 8;
+  cursor: pointer; z-index: var(--z-tool-mode);
   transform: translateY(-14px);
   transition: opacity 0.28s ease, transform 0.34s cubic-bezier(0.22,1,0.36,1), background 0.1s ease;
 }
@@ -878,7 +872,7 @@ body {
   backdrop-filter: var(--glass-filter); -webkit-backdrop-filter: var(--glass-filter);
   border: var(--glass-border);
   box-shadow: var(--glass-shadow);
-  border-radius: 0 20px 20px 0; z-index: 8;
+  border-radius: 0 20px 20px 0; z-index: var(--z-tool-mode);
   opacity: 0; pointer-events: none; transform: translateX(-36px);
   transition: opacity 0.28s ease, transform 0.38s cubic-bezier(0.22,1,0.36,1);
 }
@@ -913,7 +907,7 @@ body {
   box-shadow: var(--glass-shadow);
   border-radius: 999px; padding: 0 20px; height: 76px;
   display: flex; align-items: center; gap: 0;
-  z-index: 8;
+  z-index: var(--z-tool-mode);
   opacity: 0; transform: translateY(32px); pointer-events: none;
   transition: opacity 0.28s ease, transform 0.34s cubic-bezier(0.22,1,0.36,1);
 }
@@ -973,12 +967,38 @@ input[type="range"]::-moz-range-thumb {
 }
 .pen-type-btn.active { background: rgba(255,255,255,0.78); }
 
+#tmPenBar.tm-pen-panel {
+  height: auto;
+  min-height: 0;
+  border-radius: 24px;
+  padding: 12px 18px 16px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  transform: translateY(24px);
+}
+
+#tmPenBar.tm-pen-panel.tm-in {
+  transform: translateY(0);
+}
+
+#tmPenBar.tm-pen-panel .tm-divider {
+  display: block;
+  margin: 0;
+}
+
+#doodleOpacitySlider {
+  background: linear-gradient(to right,
+    rgba(255,255,255,0.82) var(--fill,100%),
+    rgba(255,255,255,0.15) var(--fill,100%));
+}
+
 /* ── S6 Bottom action bar ── */
 .s6-bottom-bar {
   position: absolute;
   left: 16px; right: 16px; top: 835px;
   display: flex; align-items: center; gap: 10px;
-  z-index: 6;
+  z-index: var(--z-editor-chrome);
   opacity: 0; transform: translateY(24px);
   transition: opacity 0.4s ease, transform 0.52s cubic-bezier(0.22,1,0.36,1);
   pointer-events: none;
@@ -1060,7 +1080,7 @@ input[type="range"]::-moz-range-thumb {
   position: absolute;
   bottom: 108px; left: 50%;
   transform: translateX(-50%) translateY(8px);
-  z-index: 10;
+  z-index: var(--z-toast);
 }
 .s6-toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
 
@@ -1074,7 +1094,7 @@ input[type="range"]::-moz-range-thumb {
   border-radius: var(--radius-sheet);
   padding: 28px 28px 44px;
   display: flex; flex-direction: column; gap: 12px;
-  z-index: 11; opacity: 0; pointer-events: none;
+  z-index: var(--z-sheet); opacity: 0; pointer-events: none;
   transition: opacity 0.35s ease, transform 0.48s cubic-bezier(0.22,1,0.36,1);
 }
 .s7-pop.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
@@ -1194,7 +1214,7 @@ input[type="range"]::-moz-range-thumb {
 .contrib-scrim {
   position: absolute; inset: 0;
   background: rgba(0,0,0,0.38);
-  z-index: 11; opacity: 0; pointer-events: none;
+  z-index: var(--z-overlay-scrim); opacity: 0; pointer-events: none;
   transition: opacity 0.28s ease;
 }
 .contrib-scrim.visible { opacity: 1; pointer-events: auto; }
@@ -1204,7 +1224,7 @@ input[type="range"]::-moz-range-thumb {
   left: 0; right: 0; bottom: 0;
   background: white; border-radius: 24px 24px 0 0;
   padding: 12px 24px 48px;
-  z-index: 12;
+  z-index: var(--z-sheet);
   transform: translateY(100%);
   transition: transform 0.42s cubic-bezier(0.22,1,0.36,1);
 }
@@ -1260,7 +1280,7 @@ input[type="range"]::-moz-range-thumb {
   width: 414px; height: 750px;
   border-radius: 32px;
   overflow: hidden;
-  z-index: 1;
+  z-index: var(--z-live-media);
   box-shadow: 0 8px 40px rgba(0,0,0,0.28), 0 0 0 1px rgba(0,0,0,0.06);
 }
 
@@ -1270,7 +1290,7 @@ input[type="range"]::-moz-range-thumb {
   left: -8px; top: 0;
   width: 430px; height: 750px;
   object-fit: cover;
-  z-index: 3;
+  z-index: var(--z-frame-art);
   pointer-events: none;
   display: block;
   /* Heart cutout: ellipse at center of heart shape, gradient feather border */
@@ -1298,7 +1318,7 @@ input[type="range"]::-moz-range-thumb {
   border-radius: 50%;
   background: radial-gradient(circle, rgba(255,220,100,0.55) 0%, rgba(255,180,50,0.28) 45%, transparent 75%);
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--z-frame-scrim);
   transform: translate(-50%, -50%) scale(1);
   animation: cutoutBreathe 3.2s ease-in-out infinite;
   transition: opacity 0.5s ease;
@@ -1310,7 +1330,7 @@ input[type="range"]::-moz-range-thumb {
   position: absolute;
   left: 0; top: 0;
   width: 422px; height: 750px;
-  z-index: 0;
+  z-index: var(--z-frame-bg);
   opacity: 1;
   transition: opacity 0.7s ease;
   background-color: #e8e8e8;
@@ -1335,7 +1355,7 @@ input[type="range"]::-moz-range-thumb {
   backdrop-filter: blur(40px); -webkit-backdrop-filter: blur(40px);
   border: 1.5px solid rgba(45,42,255,0.2);
   border-radius: 20px 20px 0 0;
-  z-index: 11;
+  z-index: var(--z-sheet);
   display: flex; flex-direction: column;
   transform: translateY(100%); opacity: 0;
   transition: transform 0.44s cubic-bezier(0.22,1,0.36,1), opacity 0.3s ease;
@@ -1510,7 +1530,7 @@ input[type="range"]::-moz-range-thumb {
   backdrop-filter: blur(40px); -webkit-backdrop-filter: blur(40px);
   border: 1.5px solid rgba(45,42,255,0.2);
   border-radius: 20px 20px 0 0;
-  z-index: 12;
+  z-index: var(--z-new-sticker);
   display: flex; flex-direction: column;
   transform: translateY(100%); opacity: 0;
   transition: transform 0.44s cubic-bezier(0.22,1,0.36,1), opacity 0.3s ease;
@@ -1533,7 +1553,7 @@ input[type="range"]::-moz-range-thumb {
 .ns-btn:active { opacity: 0.7; transform: scale(0.91) translateY(3px); box-shadow: 0 2px 0 #1A1A2E; }
 
 #btnNsRefineBack {
-  position: absolute; top: 20px; left: 20px; z-index: 16;
+  position: absolute; top: 20px; left: 20px; z-index: var(--z-drag-handle);
   display: none;
 }
 
@@ -1582,7 +1602,7 @@ input[type="range"]::-moz-range-thumb {
 #stickerOverlay {
   position: absolute; left: 8px; top: 77px;
   width: 414px; height: 750px;
-  pointer-events: none; z-index: 4;
+  pointer-events: none; z-index: var(--z-stickers);
 }
 #stickerOverlay.stk-active { pointer-events: auto; }
 
@@ -1597,7 +1617,7 @@ input[type="range"]::-moz-range-thumb {
   background: white; border: none; border-radius: 50%;
   font-size: 15px; line-height: 1; cursor: pointer;
   display: none; align-items: center; justify-content: center;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.35); z-index: 2; color: #1A1A2E;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35); z-index: var(--z-live-media); color: #1A1A2E;
 }
 .placed-sticker.stk-selected .stk-del { display: flex; }
 .placed-sticker.stk-selected { outline: 2px dashed rgba(255,255,255,0.55); border-radius: 6px; outline-offset: 4px; }
@@ -1617,7 +1637,7 @@ input[type="range"]::-moz-range-thumb {
   background: rgba(24,22,40,0.78);
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  opacity: 0; pointer-events: none; z-index: 10;
+  opacity: 0; pointer-events: none; z-index: var(--z-overlay-scrim);
   transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.34,1.56,0.64,1), background 0.15s ease;
 }
 #stkTrashBin.stk-trash-show { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
