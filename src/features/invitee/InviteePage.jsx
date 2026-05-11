@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useLocation, useParams } from 'react-router-dom';
 import '../../styles/invitee.css';
 import { delay, dataUrlToBlob, getPos } from '../editor/utils/canvas.js';
 import { useToast } from '../editor/hooks/useToast.js';
@@ -7,16 +8,29 @@ import StickerPanel from '../editor/components/StickerPanel.jsx';
 import DrawingToolOverlays from '../editor/components/DrawingToolOverlays.jsx';
 import ConfirmDialog from '../editor/components/ConfirmDialog.jsx';
 import ExitButton from '../editor/components/ExitButton.jsx';
+import FrameCanvas from '../editor/components/FrameCanvas.jsx';
+import Step3CameraControls from '../inviter/components/Step3CameraControls.jsx';
 import InviteeToolbar from './components/InviteeToolbar.jsx';
+import GlassSurface from '../../components/ui/GlassSurface.jsx';
 import SolidIconButton from '../../components/ui/SolidIconButton.jsx';
 import Toast from '../../components/ui/Toast.jsx';
 import { INVITEE_FLOW_STATES } from './state.js';
+import { fetchInvite } from '../../lib/api.js';
 
 const TIMER_STEPS = [0, 3, 6, 10];
 const DEFAULT_FRAME_NAME = 'babe, wake up';
 const DEFAULT_FRAME_URL = 'canvas-frame-teletubby.png';
+const DEFAULT_INVITER_USERNAME = 'yunchai';
+const FRAME_WIDTH = 414;
+const FRAME_HEIGHT = 736;
 
 export default function InviteePage() {
+  const { requestId } = useParams();
+  const location = useLocation();
+  const isPublicInviteRoute = location.pathname === '/invite' || location.pathname.startsWith('/invite/');
+  const isRequestInvite = Boolean(requestId);
+  const isEmptyInviteRoute = isPublicInviteRoute && !isRequestInvite;
+
   // ── DOM refs ──
   const screenRef = useRef(null);
   const videoRef = useRef(null);
@@ -83,15 +97,22 @@ export default function InviteePage() {
   const [doodleOpacity, setDoodleOpacity] = useState(100);
   const [doodleMode, setDoodleMode] = useState('draw');
   const [penType, setPenType] = useState('pen');
-  const [frameUrl] = useState(() => {
+  const [frameUrl, setFrameUrl] = useState(() => {
+    if (isPublicInviteRoute) return '';
     const params = new URLSearchParams(window.location.search);
     return params.get('frame') || DEFAULT_FRAME_URL;
   });
-  const [frameName] = useState(() => {
+  const [frameName, setFrameName] = useState(() => {
+    if (isPublicInviteRoute) return 'shared Retake frame';
     const params = new URLSearchParams(window.location.search);
     return params.get('name') || DEFAULT_FRAME_NAME;
   });
-  const isCustomFrame = frameUrl !== DEFAULT_FRAME_URL;
+  const [inviteUsername, setInviteUsername] = useState(DEFAULT_INVITER_USERNAME);
+  const [inviteLoading, setInviteLoading] = useState(isPublicInviteRoute);
+  const [inviteError, setInviteError] = useState('');
+  const [cameraIssue, setCameraIssue] = useState('');
+  const [inviteReloadKey, setInviteReloadKey] = useState(0);
+  const isCustomFrame = Boolean(frameUrl && frameUrl !== DEFAULT_FRAME_URL);
 
   // Visibility states
   const [inviteCardVisible, setInviteCardVisible] = useState(false);
@@ -294,7 +315,7 @@ export default function InviteePage() {
   // ── Photo transform ──
   const minScaleForAngle = useCallback((deg) => {
     const r = Math.abs(deg * Math.PI / 180) % (Math.PI / 2);
-    const W = 421, H = 748;
+    const W = FRAME_WIDTH, H = FRAME_HEIGHT;
     return Math.max(
       1,
       (W * Math.abs(Math.cos(r)) + H * Math.abs(Math.sin(r))) / W,
@@ -314,8 +335,8 @@ export default function InviteePage() {
   // ── Capture ──
   const capturePhoto = useCallback(async () => {
     const canvas = captureCanvasRef.current;
-    canvas.width = 414;
-    canvas.height = 748;
+    canvas.width = FRAME_WIDTH;
+    canvas.height = FRAME_HEIGHT;
     const ctx = canvas.getContext('2d');
     const photoContainer = photoContainerRef.current;
     const photoOverlay = photoOverlayRef.current;
@@ -325,30 +346,30 @@ export default function InviteePage() {
       ctx.fillStyle = getComputedStyle(document.documentElement)
         .getPropertyValue('--color-ink')
         .trim() || '#1A1A2E';
-      ctx.fillRect(0, 0, 414, 748);
+      ctx.fillRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT);
       ctx.save();
-      ctx.translate(414 / 2, 748 / 2);
+      ctx.translate(FRAME_WIDTH / 2, FRAME_HEIGHT / 2);
       ctx.scale(photoScaleRef.current, photoScaleRef.current);
       ctx.rotate(photoRotationRef.current * Math.PI / 180);
       const iw = photoOverlay.naturalWidth, ih = photoOverlay.naturalHeight;
-      const scale = 414 / iw;
+      const scale = FRAME_WIDTH / iw;
       const drawH = ih * scale;
-      ctx.drawImage(photoOverlay, 0, 0, iw, ih, -414 / 2, -drawH / 2, 414, drawH);
+      ctx.drawImage(photoOverlay, 0, 0, iw, ih, -FRAME_WIDTH / 2, -drawH / 2, FRAME_WIDTH, drawH);
       ctx.restore();
     } else {
-      const vw = cameraView.videoWidth || 414;
-      const vh = cameraView.videoHeight || 748;
-      const boxAr = 414 / 748, vidAr = vw / vh;
+      const vw = cameraView.videoWidth || FRAME_WIDTH;
+      const vh = cameraView.videoHeight || FRAME_HEIGHT;
+      const boxAr = FRAME_WIDTH / FRAME_HEIGHT, vidAr = vw / vh;
       let sx, sy, sw, sh;
       if (vidAr > boxAr) { sh = vh; sw = sh * boxAr; sx = (vw - sw) / 2; sy = 0; }
       else { sw = vw; sh = sw / boxAr; sx = 0; sy = (vh - sh) / 2; }
-      ctx.drawImage(cameraView, sx, sy, sw, sh, 0, 0, 414, 748);
+      ctx.drawImage(cameraView, sx, sy, sw, sh, 0, 0, FRAME_WIDTH, FRAME_HEIGHT);
     }
     return canvas.toDataURL('image/jpeg', 0.92);
   }, []);
 
   const buildCompositeBlob = useCallback(async () => {
-    const W = 414, H = 750;
+    const W = FRAME_WIDTH, H = FRAME_HEIGHT;
     const offscreen = document.createElement('canvas');
     offscreen.width = W; offscreen.height = H;
     const cctx = offscreen.getContext('2d');
@@ -391,10 +412,10 @@ export default function InviteePage() {
         // 4b. Punch the cutout hole using destination-out + radial gradient.
         //     Frame element is 430px wide, offset -8px → mask centre on canvas:
         //       cx = (50% of 430) - 8 = 207px
-        //       cy = 23% of 750     = 172.5px
+        //       cy = 23% of frame height
         //     Gradient stops are the INVERSE of the CSS mask alpha
         //     (CSS alpha=0 → we fully remove; CSS alpha=1 → we don't remove).
-        const cx = 207, cy = 172.5, r = 105;
+        const cx = 207, cy = H * 0.23, r = 105;
         const grad = fCtx.createRadialGradient(cx, cy, 0, cx, cy, r);
         grad.addColorStop(0,    'rgba(0,0,0,1)');    // fully remove (CSS alpha=0)
         grad.addColorStop(0.55, 'rgba(0,0,0,1)');    // fully remove
@@ -446,21 +467,29 @@ export default function InviteePage() {
   }, []);
 
   // ── Camera ──
-  const activateCameraS3 = useCallback(async () => {
+  const activateCameraS3 = useCallback(async (showInviteAfterStart = true) => {
     setBottomSheetVisible(false);
+    setInviteCardVisible(false);
     setScrimVisible(false);
+    setCameraIssue('');
     await delay(200);
-    if (videoRef.current) videoRef.current.classList.add('active');
+    if (videoRef.current) {
+      videoRef.current.classList.add('active');
+      videoRef.current.style.transform = currentFacingRef.current === 'user' ? 'scaleX(-1)' : 'none';
+    }
     const mkSlot = document.getElementById('mkSlotBg');
     if (mkSlot) mkSlot.style.opacity = '0';
+    if (!showInviteAfterStart) return;
     await delay(1200);
     setScrimVisible(true);
     setInviteCardVisible(true);
   }, []);
 
-  const simulateCameraAccept = useCallback(async () => {
+  const simulateCameraAccept = useCallback(async (showInviteAfterStart = true) => {
     setBottomSheetVisible(false);
+    setInviteCardVisible(false);
     setScrimVisible(false);
+    setCameraIssue('');
     await delay(200);
     const mkSlot = document.getElementById('mkSlotBg');
     if (mkSlot) mkSlot.style.opacity = '0';
@@ -468,28 +497,35 @@ export default function InviteePage() {
       videoRef.current.classList.add('active');
       videoRef.current.style.background = '#222';
     }
+    if (!showInviteAfterStart) return;
     await delay(1200);
     setScrimVisible(true);
     setInviteCardVisible(true);
   }, []);
 
-  const handleAllowCamera = useCallback(async () => {
+  const requestCamera = useCallback(async ({ showInviteAfterStart = true, allowSimulation = true } = {}) => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      await simulateCameraAccept();
+      if (!allowSimulation) throw new Error('Camera is not available in this browser.');
+      await simulateCameraAccept(showInviteAfterStart);
       return;
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: 422, height: 750 }
+        video: { facingMode: { ideal: 'environment' }, width: FRAME_WIDTH, height: FRAME_HEIGHT }
       });
       activeStreamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
-      await activateCameraS3();
+      await activateCameraS3(showInviteAfterStart);
     } catch (err) {
       console.warn('Camera unavailable:', err.name, err.message);
-      await simulateCameraAccept();
+      if (!allowSimulation) throw err;
+      await simulateCameraAccept(showInviteAfterStart);
     }
   }, [simulateCameraAccept, activateCameraS3]);
+
+  const handleAllowCamera = useCallback(async () => {
+    await requestCamera();
+  }, [requestCamera]);
 
   const clearDrawingCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -807,6 +843,58 @@ export default function InviteePage() {
     setS6Visible(false);
   }, [exitToolMode]);
 
+  useEffect(() => {
+    if (!isPublicInviteRoute) return;
+
+    let cancelled = false;
+
+    async function loadInvite() {
+      setInviteLoading(Boolean(requestId));
+      setInviteError('');
+      setCameraIssue('');
+      setInviteCardVisible(false);
+      setScrimVisible(false);
+
+      if (!requestId) {
+        if (cancelled) return;
+        setFrameUrl('');
+        setFrameName('shared Retake frame');
+        setInviteUsername('Retake');
+        setInviteError('This frame link is missing a request ID. Open the invite link your friend sent from Retake.');
+        setInviteLoading(false);
+        setScrimVisible(true);
+        setInviteCardVisible(true);
+        return;
+      }
+
+      try {
+        const invite = await fetchInvite({ id: requestId });
+        if (cancelled) return;
+        if (!invite?.frameUrl) {
+          throw new Error('Invite data is missing a frame.');
+        }
+        setFrameUrl(invite.frameUrl || DEFAULT_FRAME_URL);
+        setFrameName(invite.frameName || DEFAULT_FRAME_NAME);
+        setInviteUsername(invite.username || DEFAULT_INVITER_USERNAME);
+        setInviteLoading(false);
+        setScrimVisible(true);
+        setInviteCardVisible(true);
+      } catch (err) {
+        if (cancelled) return;
+        setInviteError(err.message || 'Frame invite could not be loaded.');
+        setInviteLoading(false);
+        setScrimVisible(true);
+        setInviteCardVisible(true);
+      }
+    }
+
+    loadInvite();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isPublicInviteRoute, requestId, inviteReloadKey]);
+
   // ── Main useEffect ──
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -944,8 +1032,8 @@ export default function InviteePage() {
     fitToViewport();
     window.addEventListener('resize', fitToViewport);
 
-    // Show camera permission sheet on load
-    setTimeout(() => {
+    // Legacy /invitee flow still starts with the camera permission sheet.
+    const entryTimer = isPublicInviteRoute ? null : setTimeout(() => {
       setScrimVisible(true);
       setBottomSheetVisible(true);
     }, 900);
@@ -973,15 +1061,46 @@ export default function InviteePage() {
       document.removeEventListener('touchmove', onDocTouchMove);
       document.removeEventListener('touchend', onDocTouchEnd);
       window.removeEventListener('resize', fitToViewport);
+      if (entryTimer) clearTimeout(entryTimer);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Event handlers ──
+  const handleOpenCamera = useCallback(async () => {
+    if (inviteLoading || isEmptyInviteRoute) return;
+
+    if (inviteError) {
+      setInviteReloadKey(key => key + 1);
+      return;
+    }
+
+    try {
+      await requestCamera({
+        showInviteAfterStart: false,
+        allowSimulation: false,
+      });
+      setScreenClass('screen4-bg');
+      setCamTopGradientVisible(true);
+      await delay(180);
+      await enterCameraUI();
+    } catch (err) {
+      console.warn('Camera permission blocked:', err?.name, err?.message);
+      setCameraIssue('Camera access got blocked. Turn it on in Safari settings, then try again.');
+      setScrimVisible(true);
+      setInviteCardVisible(true);
+    }
+  }, [enterCameraUI, inviteError, inviteLoading, isEmptyInviteRoute, requestCamera]);
+
   const handleAccept = useCallback(() => {
+    if (isPublicInviteRoute) {
+      handleOpenCamera();
+      return;
+    }
+
     setInviteCardVisible(false);
     setScrimVisible(false);
     setTimeout(() => enterCameraUI(), 250);
-  }, [enterCameraUI]);
+  }, [enterCameraUI, handleOpenCamera, isPublicInviteRoute]);
 
   const handleDecline = useCallback(() => {
     setInviteCardVisible(false);
@@ -1003,7 +1122,7 @@ export default function InviteePage() {
     const hasContributed = (photoContainer && photoContainer.classList.contains('active')) || capturedDataUrlRef.current;
     if (!hasContributed) {
       const ok = await showConfirm(
-        "Skip your turn? 👀\nYunchai is waiting for your photo.",
+        `Skip your turn? 👀\n${inviteUsername} is waiting for your photo.`,
         'Skip for now', true, 'Stay & Shoot'
       );
       if (!ok) return;
@@ -1017,7 +1136,7 @@ export default function InviteePage() {
     setScreenClass(c => c.replace('screen4-bg', ''));
     setCutoutGlowHidden(false);
     setTapHintVisible(false); setTapHintHiding(false);
-  }, [showConfirm]);
+  }, [inviteUsername, showConfirm]);
 
   const handleFlipCam = useCallback(async () => {
     if (!navigator.mediaDevices) return;
@@ -1027,7 +1146,10 @@ export default function InviteePage() {
       activeStreamRef.current = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: currentFacingRef.current }
       });
-      if (videoRef.current) videoRef.current.srcObject = activeStreamRef.current;
+      if (videoRef.current) {
+        videoRef.current.srcObject = activeStreamRef.current;
+        videoRef.current.style.transform = currentFacingRef.current === 'user' ? 'scaleX(-1)' : 'none';
+      }
     } catch(e) { /* ignore */ }
   }, []);
 
@@ -1036,6 +1158,10 @@ export default function InviteePage() {
     timerIndexRef.current = idx;
     setTimerValue(TIMER_STEPS[idx]);
   }, []);
+
+  const handleFlashClick = useCallback(() => {
+    showToast('Flash unavailable');
+  }, [showToast]);
 
   const handleGalleryBtnClick = useCallback(() => {
     if (photoLibraryInputRef.current) photoLibraryInputRef.current.click();
@@ -1251,21 +1377,52 @@ export default function InviteePage() {
           : (camTopBarVisible || camBottomBarVisible || screen4CardVisible)
             ? INVITEE_FLOW_STATES.CAMERA_LIVE
             : INVITEE_FLOW_STATES.INTRO;
+  const inviteCtaLabel = isEmptyInviteRoute
+    ? 'Frame link required'
+    : inviteLoading
+      ? 'Loading...'
+      : inviteError
+        ? 'Try Again'
+        : isPublicInviteRoute
+          ? 'Open Camera'
+          : 'View Frame';
+  const inviteSubtitle = inviteError
+    ? 'frame link needs a refresh.'
+    : 'invites you to this frame.';
+  const inviteCardTitle = inviteError ? 'Retake' : inviteUsername;
+  const inviteCardDisabled = inviteLoading || isEmptyInviteRoute;
+  const frameSlotStyle = {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: `${FRAME_WIDTH}px`,
+    height: `${FRAME_HEIGHT}px`,
+    backgroundColor: isEmptyInviteRoute ? 'var(--color-canvas)' : '#e8e8e8',
+    backgroundImage: isEmptyInviteRoute
+      ? 'none'
+      : 'linear-gradient(45deg,#d0d0d0 25%,transparent 25%),linear-gradient(-45deg,#d0d0d0 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d0d0d0 75%),linear-gradient(-45deg,transparent 75%,#d0d0d0 75%)',
+    backgroundSize: '20px 20px',
+    backgroundPosition: '0 0,0 10px,10px -10px,-10px 0',
+  };
 
   return (
-    <div className={`screen${screenClass ? ' ' + screenClass : ''}`} id="screen" ref={screenRef} data-flow-state={flowState}>
+    <div className={`screen${screenClass ? ' ' + screenClass : ''}${isPublicInviteRoute ? ' invite-request-flow' : ''}${isEmptyInviteRoute ? ' invite-empty-flow' : ''}`} id="screen" ref={screenRef} data-flow-state={flowState}>
 
-      {/* Frame container */}
-      <div id="frameContainer"
-        style={{ position:'absolute',left:'8px',top:'77px',width:'414px',height:'750px',overflow:'hidden',borderRadius:'32px',zIndex:'var(--z-live-media)' }}>
-
-        <div id="mkSlotBg"
-          style={{ position:'absolute',left:0,top:0,width:'414px',height:'750px',
-            backgroundColor:'#e8e8e8',
-            backgroundImage:'linear-gradient(45deg,#d0d0d0 25%,transparent 25%),linear-gradient(-45deg,#d0d0d0 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d0d0d0 75%),linear-gradient(-45deg,transparent 75%,#d0d0d0 75%)',
-            backgroundSize:'20px 20px',
-            backgroundPosition:'0 0,0 10px,10px -10px,-10px 0' }}>
-        </div>
+      <FrameCanvas
+        canvasRef={canvasRef}
+        showCheckerBg={false}
+        frameStyle={{
+          position: 'absolute',
+          left: '8px',
+          top: '77px',
+          width: `${FRAME_WIDTH}px`,
+          height: `${FRAME_HEIGHT}px`,
+          overflow: 'hidden',
+          borderRadius: '32px',
+          zIndex: 'var(--z-live-media)',
+        }}
+      >
+        <div id="mkSlotBg" style={frameSlotStyle}></div>
 
         <video className="camera-view" id="cameraView" ref={videoRef} autoPlay playsInline muted
           onClick={handleCameraViewClick}></video>
@@ -1275,32 +1432,39 @@ export default function InviteePage() {
           <img className="photo-overlay" id="photoOverlay" ref={photoOverlayRef} alt="" draggable="false" />
         </div>
 
-        <img
-          id="yunchaiPhoto"
-          className={isCustomFrame ? 'custom-frame' : ''}
-          src={frameUrl}
-          crossOrigin="anonymous"
-          alt=""
-        />
+        {frameUrl ? (
+          <img
+            id="yunchaiPhoto"
+            className={isCustomFrame ? 'custom-frame' : ''}
+            src={frameUrl}
+            crossOrigin="anonymous"
+            alt=""
+          />
+        ) : null}
 
-        <canvas id="editCanvas" ref={canvasRef} className="no-tool" width="414" height="750"></canvas>
-
-      </div>
+      </FrameCanvas>
 
       {/* Cutout glow */}
       <div id="cutoutGlow" className={cutoutGlowHidden ? 'hidden' : ''}></div>
 
       {/* Invite card (Screen 2) */}
       <div className={`invite-card${inviteCardVisible ? ' visible' : ''}`} id="inviteCard">
-        <div className="app-icon">YS</div>
+        <div className="app-icon">{inviteError ? 'RT' : inviteUsername.slice(0, 2).toUpperCase()}</div>
         <div className="card-content">
           <div className="card-text">
-            <span className="card-username">yunchai</span>
-            <span className="card-subtitle">invites you to this frame</span>
+            <span className="card-username">{inviteCardTitle}</span>
+            <span className="card-subtitle">{inviteSubtitle}</span>
           </div>
-          <div className="card-buttons">
-            <button className="btn btn-decline" id="btnDecline" onClick={handleDecline}>Decline</button>
-            <button className="btn btn-accept" id="btnAccept" onClick={handleAccept}>View Frame</button>
+          {(cameraIssue || inviteError) && (
+            <p className="card-status">{cameraIssue || inviteError}</p>
+          )}
+          <div className={`card-buttons${isPublicInviteRoute ? ' single-action' : ''}`}>
+            {!isPublicInviteRoute && (
+              <button className="btn btn-decline" id="btnDecline" onClick={handleDecline}>Decline</button>
+            )}
+            <button className="btn btn-accept" id="btnAccept" onClick={handleAccept} disabled={inviteCardDisabled}>
+              {inviteCtaLabel}
+            </button>
           </div>
         </div>
       </div>
@@ -1318,6 +1482,21 @@ export default function InviteePage() {
       <div className={`cam-top-gradient${camTopGradientVisible ? ' visible' : ''}`} id="camTopGradient"></div>
 
       {/* Camera top bar */}
+      {isPublicInviteRoute && camTopBarVisible && !camTopBarMode ? (
+        <>
+          <ExitButton visible label="Leave camera preview" onClick={handleCloseCamera} />
+          <Step3CameraControls
+            visible
+            flashAvailable={false}
+            flashEnabled={false}
+            timerSeconds={timerValue}
+            onFlash={handleFlashClick}
+            onTimer={handleTimerClick}
+            onFlip={handleFlipCam}
+          />
+        </>
+      ) : null}
+      {(!isPublicInviteRoute || camTopBarMode) && (
       <div className={camTopBarClass} id="camTopBar">
         <button className="cam-btn" id="btnCloseCamera" aria-label="Close"
           onClick={handleCloseCamera}>
@@ -1326,7 +1505,7 @@ export default function InviteePage() {
           </svg>
         </button>
         <div className="cam-top-middle">
-          <button className="cam-btn" id="btnFlash" aria-label="Flash">
+          <button className="cam-btn" id="btnFlash" aria-label="Flash" onClick={handleFlashClick}>
             <svg width="26" height="26" viewBox="0 0 22 22" fill="white">
               <path d="M12.5 2L4 12.5H10.5L9.5 20l9-10.5H13L12.5 2Z" />
             </svg>
@@ -1365,6 +1544,7 @@ export default function InviteePage() {
           </svg>
         </button>
       </div>
+      )}
 
       {/* Camera popup */}
       <Toast className="cam-popup" id="camPopup" visible={camPopupVisible}>
@@ -1388,12 +1568,12 @@ export default function InviteePage() {
         onChange={handlePhotoLibraryChange} />
 
       {/* Camera bottom bar */}
-      <div className={`cam-bottom-bar${camBottomBarVisible ? ' visible' : ''}`} id="camBottomBar">
-        <SolidIconButton className="cam-gallery-btn" id="btnGallery" label="Photo library"
+      <GlassSurface className={`cam-bottom-bar${camBottomBarVisible ? ' visible' : ''}`} id="camBottomBar">
+        <SolidIconButton className="cam-gallery-btn" id="btnGallery" icon="photo" label="Photo library"
           shape="square" onClick={handleGalleryBtnClick} />
         <div className="cam-marquee-wrap">
           <span className="cam-marquee-text">
-            <span className="marquee-username">yunchai</span> <span className="marquee-sep">|</span> {frameName} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span className="marquee-username">yunchai</span> <span className="marquee-sep">|</span> {frameName} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+            <span className="marquee-username">{inviteUsername}</span> <span className="marquee-sep">|</span> {frameName} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span className="marquee-username">{inviteUsername}</span> <span className="marquee-sep">|</span> {frameName} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
           </span>
         </div>
         <button className="cam-proceed-btn" id="btnProceed" aria-label="Proceed"
@@ -1402,7 +1582,7 @@ export default function InviteePage() {
             <polyline points="11 15 16 10 11 5" /><polyline points="5 15 10 10 5 5" />
           </svg>
         </button>
-      </div>
+      </GlassSurface>
 
       {/* Scrim (screen 3) */}
       <div className={`scrim${scrimVisible ? ' visible' : ''}`} id="scrim"

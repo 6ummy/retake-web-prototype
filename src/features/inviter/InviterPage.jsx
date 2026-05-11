@@ -286,6 +286,8 @@ export default function InviterPage() {
   const activeToolRef = useRef(null);
   const toolRadiusRef = useRef(32);
   const eraserOpacityRef = useRef(1.0);
+  const magicPenModeRef = useRef('freehand');
+  const magicPenOpacityRef = useRef(100);
   const doodleColorRef = useRef('#FFFFFF');
   const doodleOpacityRef = useRef(100);
   const doodleModeRef = useRef('draw');
@@ -335,6 +337,8 @@ export default function InviterPage() {
   const [doodleColor, setDoodleColor] = useState('#FFFFFF');
   const [doodleOpacity, setDoodleOpacity] = useState(100);
   const [doodleMode, setDoodleMode] = useState('draw');
+  const [magicPenMode, setMagicPenMode] = useState('freehand');
+  const [magicPenOpacity, setMagicPenOpacity] = useState(100);
   const [penType, setPenType] = useState('pen');
   const [frameName, setFrameName] = useState('my frame');
   const [editorVisible, setEditorVisible] = useState(false);
@@ -630,6 +634,8 @@ export default function InviterPage() {
     activeToolRef,
     toolRadiusRef,
     eraserOpacityRef,
+    magicPenModeRef,
+    magicPenOpacityRef,
     doodleColorRef,
     doodleOpacityRef,
     doodleModeRef,
@@ -657,6 +663,10 @@ export default function InviterPage() {
   const configureLeftPanel = useCallback((tool) => {
     if (tool === 'magicPen') {
       eraserOpacityRef.current = 1;
+      magicPenModeRef.current = 'freehand';
+      magicPenOpacityRef.current = 100;
+      setMagicPenMode('freehand');
+      setMagicPenOpacity(100);
       toolRadiusRef.current = Math.round(4 + 0.5 * (60 - 4));
       setHandlePos(0.5);
       if (canvasRef.current) canvasRef.current.style.cursor = 'crosshair';
@@ -2096,6 +2106,21 @@ export default function InviterPage() {
     setPenType(type);
   }, []);
 
+  const handleMagicPenModeClick = useCallback((mode) => {
+    magicPenModeRef.current = mode;
+    setMagicPenMode(mode);
+    if (canvasRef.current) canvasRef.current.style.cursor = mode === 'freehand' ? 'crosshair' : 'default';
+    if (mode !== 'freehand' && brushCursorRef.current) brushCursorRef.current.style.display = 'none';
+    syncCursor();
+  }, [syncCursor]);
+
+  const handleMagicPenOpacityInput = useCallback((e) => {
+    const value = Math.max(5, Math.min(100, Number(e.target.value) || 100));
+    magicPenOpacityRef.current = value;
+    setMagicPenOpacity(value);
+    e.target.style.setProperty('--fill', `${value}%`);
+  }, []);
+
   const isStep3 = step3Mode !== null;
   const isStep3Live = step3Mode === STEP3_MODE.LIVE;
   const isStep3PhotoReview = step3Mode === STEP3_MODE.PHOTO;
@@ -2103,6 +2128,7 @@ export default function InviterPage() {
   const isStep3Review = isStep3PhotoReview || isStep3VideoReview;
   const isStep3Countdown = step3CountdownValue !== null;
   const isStep3CaptureBusy = step3Recording || isStep3Countdown;
+  const stickerMakerVisible = stickerSys.newStickerVisible;
   const flowState = sharePanelVisible
     ? INVITER_FLOW_STATES.SHARING
     : savedFramesVisible
@@ -2219,7 +2245,7 @@ export default function InviterPage() {
       )}
 
       <Step3CameraControls
-        visible={isStep3Live && !isStep3CaptureBusy}
+        visible={isStep3Live && !isStep3CaptureBusy && !stickerMakerVisible}
         flashAvailable={step3CameraReady}
         flashEnabled={step3FlashEnabled}
         timerSeconds={step3TimerSeconds}
@@ -2229,13 +2255,13 @@ export default function InviterPage() {
       />
 
       <Step3ZoomControl
-        visible={isStep3Live && !isStep3CaptureBusy}
+        visible={isStep3Live && !isStep3CaptureBusy && !stickerMakerVisible}
         zoomOptions={step3ZoomOptions}
         zoomMode={step3ZoomMode}
         onZoom={handleStep3Zoom}
       />
 
-      {!isStep3CaptureBusy && (
+      {!isStep3CaptureBusy && !stickerMakerVisible && (
         <ExitButton
           visible={exitBtnVisible}
           out={exitBtnOut}
@@ -2244,7 +2270,7 @@ export default function InviterPage() {
         />
       )}
 
-      {!isStep3 && (
+      {!isStep3 && !stickerMakerVisible && (
         <>
           <UndoRedoCluster
             visible={undoRedoVisible}
@@ -2284,7 +2310,7 @@ export default function InviterPage() {
         </>
       )}
 
-      {isStep3Review && !isStep3CaptureBusy && (
+      {isStep3Review && !isStep3CaptureBusy && !stickerMakerVisible && (
         <VerticalToolbar
           visible={toolsVisible}
           out={toolsOut}
@@ -2304,7 +2330,7 @@ export default function InviterPage() {
         />
       )}
 
-      {isStep3 && !isStep3CaptureBusy && (
+      {isStep3 && !isStep3CaptureBusy && !stickerMakerVisible && (
         <GlassSurface className={`step3-bottom-bar visible${bottomBarOut ? ' out' : ''}`} id="step3BottomBar">
           <SolidIconButton
             className={isStep3Review ? 'step3-retake-btn' : 'step3-circle-btn'}
@@ -2343,13 +2369,16 @@ export default function InviterPage() {
       <DrawingToolOverlays
         tmLeftPanelRef={tmLeftPanelRef}
         tmSizeHandleRef={tmSizeHandleRef}
-        tmIn={tmIn}
-        tmLeftIn={tmLeftIn}
-        tmPenBarIn={tmBarMode === 'doodle'}
+        tmIn={tmIn && !stickerMakerVisible}
+        tmLeftIn={tmLeftIn && !stickerMakerVisible}
+        tmPenBarIn={tmBarMode === 'doodle' && !stickerMakerVisible}
+        tmMagicPenBarIn={tmBarMode === 'magicPen' && !stickerMakerVisible}
         doodleColor={doodleColor}
         doodleMode={doodleMode}
         doodleOpacity={doodleOpacity}
         penType={penType}
+        magicPenMode={magicPenMode}
+        magicPenOpacity={magicPenOpacity}
         tmUndoBtnDisabled={tmUndoBtnDisabled}
         tmRedoBtnDisabled={tmRedoBtnDisabled}
         onDone={handleDone}
@@ -2360,6 +2389,8 @@ export default function InviterPage() {
         onColorPickerChange={handleColorPickerChange}
         onDoodleOpacityInput={handleDoodleOpacityInput}
         onPenTypeClick={handlePenTypeClick}
+        onMagicPenModeClick={handleMagicPenModeClick}
+        onMagicPenOpacityInput={handleMagicPenOpacityInput}
       />
 
       {!isStep3CaptureBusy && (

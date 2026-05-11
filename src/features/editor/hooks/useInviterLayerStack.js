@@ -22,6 +22,12 @@ function hasVisiblePixels(canvas) {
   return false;
 }
 
+function normalizeOpacity(opacity) {
+  const number = Number(opacity);
+  if (!Number.isFinite(number)) return 1;
+  return Math.max(0, Math.min(1, number));
+}
+
 function makePreviewCanvas(source, order) {
   const canvas = copyCanvas(source);
   if (!canvas) return null;
@@ -31,7 +37,7 @@ function makePreviewCanvas(source, order) {
   return canvas;
 }
 
-export function drawCheckerboardMasked(ctx, maskCanvas) {
+export function drawCheckerboardMasked(ctx, maskCanvas, opacity = 1) {
   if (!maskCanvas) return;
   const temp = document.createElement('canvas');
   temp.width = maskCanvas.width;
@@ -48,7 +54,10 @@ export function drawCheckerboardMasked(ctx, maskCanvas) {
   }
   tCtx.globalCompositeOperation = 'destination-in';
   tCtx.drawImage(maskCanvas, 0, 0);
+  ctx.save();
+  ctx.globalAlpha = normalizeOpacity(opacity);
   ctx.drawImage(temp, 0, 0);
+  ctx.restore();
 }
 
 export default function useInviterLayerStack({
@@ -72,14 +81,23 @@ export default function useInviterLayerStack({
     if (layer.item?.el) layer.item.el.style.zIndex = z;
   }, []);
 
-  const addStrokeLayer = useCallback(({ type, sourceCanvas, maskCanvas }) => {
+  const addStrokeLayer = useCallback(({ type, sourceCanvas, maskCanvas, opacity = 1 }) => {
     if (!sourceCanvas || !hasVisiblePixels(sourceCanvas)) return false;
     const order = nextOrder();
     const id = `${type}-${Date.now()}-${order}`;
     const source = copyCanvas(sourceCanvas);
     const mask = maskCanvas ? copyCanvas(maskCanvas) : null;
-    const previewEl = makePreviewCanvas(source, order);
-    const layer = { id, type, order, source, mask, previewEl };
+    const strokeOpacity = normalizeOpacity(opacity);
+    const layer = { id, type, order, source, mask, opacity: strokeOpacity };
+    const previewEl = type === 'magicPenStroke' && mask
+      ? makePreviewCanvas(mask, order)
+      : makePreviewCanvas(source, order);
+    if (previewEl && type === 'magicPenStroke' && mask) {
+      const previewCtx = previewEl.getContext('2d');
+      previewCtx.clearRect(0, 0, previewEl.width, previewEl.height);
+      drawCheckerboardMasked(previewCtx, mask, strokeOpacity);
+    }
+    layer.previewEl = previewEl;
     layersRef.current = [...layersRef.current, layer];
     if (previewEl && frameElRef.current) frameElRef.current.appendChild(previewEl);
     return true;
@@ -181,9 +199,11 @@ export default function useInviterLayerStack({
       if (layer.type === 'doodleStroke') {
         if (layer.source) ctx.drawImage(layer.source, 0, 0, width, height);
       } else if (layer.type === 'magicPenStroke') {
+        const opacity = normalizeOpacity(layer.opacity);
         ctx.save();
         ctx.globalCompositeOperation = options.preview ? 'source-over' : 'destination-out';
-        if (options.preview) drawCheckerboardMasked(ctx, layer.mask || layer.source);
+        ctx.globalAlpha = opacity;
+        if (options.preview) drawCheckerboardMasked(ctx, layer.mask || layer.source, opacity);
         else if (layer.mask) ctx.drawImage(layer.mask, 0, 0, width, height);
         ctx.restore();
       } else if (options.includeItems === false && layer.item) {

@@ -5,6 +5,10 @@ export default function FrameCanvas({
   selectionCanvasRef,
   frameElRef,
   frameClassName = '',
+  frameStyle,
+  canvasWidth = 414,
+  canvasHeight = 736,
+  showCheckerBg = true,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -18,15 +22,29 @@ export default function FrameCanvas({
         id="frameContainer"
         ref={frameElRef}
         className={frameClassName}
+        style={frameStyle}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
       >
-        <div id="checkerBg"></div>
+        {showCheckerBg && <div id="checkerBg"></div>}
         {children}
-        <canvas id="editCanvas" ref={canvasRef} width="414" height="736" className="no-tool" />
-        <canvas id="selectionCanvas" ref={selectionCanvasRef} width="414" height="736" />
+        <canvas
+          id="editCanvas"
+          ref={canvasRef}
+          width={canvasWidth}
+          height={canvasHeight}
+          className="no-tool"
+        />
+        {selectionCanvasRef && (
+          <canvas
+            id="selectionCanvas"
+            ref={selectionCanvasRef}
+            width={canvasWidth}
+            height={canvasHeight}
+          />
+        )}
       </div>
       <div id="frameScrim" className={frameScrimVisible ? 'visible' : ''}></div>
     </>

@@ -1,5 +1,7 @@
 import { useState, useCallback } from 'react';
-import { buildInviteUrl as buildInviteLink, uploadFrame } from '../../../lib/api.js';
+import { buildRequestInviteUrl, createInvite, uploadFrame } from '../../../lib/api.js';
+
+const DEFAULT_USERNAME = 'yunchai';
 
 export function useSharePanel({ frameName, showToast, setScrimVisible, getFrameDataUrl }) {
   const [sharePanelVisible, setSharePanelVisible] = useState(false);
@@ -8,12 +10,17 @@ export function useSharePanel({ frameName, showToast, setScrimVisible, getFrameD
 
   const buildInviteUrl = useCallback(async () => {
     if (!getFrameDataUrl) {
-      return `${window.location.origin}/invitee`;
+      return buildRequestInviteUrl({ requestId: 'demo' });
     }
 
     const frameDataUrl = await getFrameDataUrl();
     const { url } = await uploadFrame({ frameDataUrl, frameName });
-    return buildInviteLink({ frameUrl: url, frameName });
+    const invite = await createInvite({
+      frameUrl: url,
+      frameName,
+      username: DEFAULT_USERNAME,
+    });
+    return invite.inviteUrl || buildRequestInviteUrl({ requestId: invite.id });
   }, [frameName, getFrameDataUrl]);
 
   const handleCopyLink = useCallback(async () => {

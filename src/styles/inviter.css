@@ -863,7 +863,7 @@ body.inviter-mode #tmLeftPanel.tm-resizing #tmSizeHandle {
 }
 
 /* ── Tool-mode bottom bar ── */
-#tmToolBar, #tmPenBar, #tmEraserBar {
+#tmToolBar, #tmPenBar, #tmEraserBar, #tmMagicPenBar {
   position: absolute;
   left: 16px; right: 16px; top: auto;
   bottom: var(--tool-pill-bottom-inset);
@@ -877,7 +877,7 @@ body.inviter-mode #tmLeftPanel.tm-resizing #tmSizeHandle {
   opacity: 0; transform: translateY(32px); pointer-events: none;
   transition: opacity 0.28s ease, transform 0.34s cubic-bezier(0.22,1,0.36,1);
 }
-#tmToolBar.tm-in, #tmPenBar.tm-in, #tmEraserBar.tm-in {
+#tmToolBar.tm-in, #tmPenBar.tm-in, #tmEraserBar.tm-in, #tmMagicPenBar.tm-in {
   opacity: 1; transform: translateY(0); pointer-events: auto;
 }
 
@@ -1069,6 +1069,19 @@ input[type="range"]::-webkit-slider-thumb {
   box-shadow: 0 1px 6px rgba(0,0,0,0.32); cursor: pointer;
 }
 #eraserOpacitySlider {
+  background: linear-gradient(to right,
+    var(--color-brand-yellow) var(--fill,100%),
+    rgba(255,255,255,0.15) var(--fill,100%));
+}
+
+#magicPenOpacitySlider {
+  background: linear-gradient(to right,
+    var(--color-brand-yellow) var(--fill,100%),
+    rgba(255,255,255,0.15) var(--fill,100%));
+}
+
+#nsMakerOpacitySlider,
+#nsOpacitySlider {
   background: linear-gradient(to right,
     var(--color-brand-yellow) var(--fill,100%),
     rgba(255,255,255,0.15) var(--fill,100%));
@@ -1647,13 +1660,14 @@ body.inviter-mode .sticker-panel .sp-tab.active .sp-tab-emoji { opacity: 1; }
 
 /* ── New Sticker Screen (lasso → ML → refine) ── */
 body.inviter-mode .new-sticker-screen {
+  --ns-bar-height: 206px;
   position: absolute; left: 0; top: 0;
   width: 100%; height: 100%;
   background: rgba(22,28,34,0.42);
   backdrop-filter: var(--glass-filter); -webkit-backdrop-filter: var(--glass-filter);
   border: 0;
   box-shadow: none;
-  border-radius: 20px 20px 0 0; z-index: var(--z-new-sticker);
+  border-radius: 20px 20px 0 0; z-index: var(--z-modal);
   transform: translateY(100%); opacity: 0;
   transition: transform 0.44s cubic-bezier(0.22,1,0.36,1), opacity 0.3s ease;
   pointer-events: none;
@@ -1661,7 +1675,7 @@ body.inviter-mode .new-sticker-screen {
 body.inviter-mode .new-sticker-screen.ns-visible { transform: translateY(0); opacity: 1; pointer-events: auto; }
 
 .ns-header {
-  position: absolute; top: 0; left: 0; right: 0; z-index: var(--z-new-sticker);
+  position: absolute; top: 0; left: 0; right: 0; z-index: 3;
   height: 78px;
   display: flex; align-items: center; justify-content: center;
   padding: var(--canvas-chrome-inset);
@@ -1685,6 +1699,19 @@ body.inviter-mode .new-sticker-screen.ns-visible { transform: translateY(0); opa
   top: var(--canvas-chrome-inset);
   pointer-events: auto;
 }
+.ns-check-btn {
+  position: absolute;
+  right: var(--canvas-chrome-inset);
+  top: var(--canvas-chrome-inset);
+  pointer-events: auto;
+}
+.ns-check-btn:not(:disabled) {
+  background: var(--color-brand-yellow);
+  color: var(--color-ink);
+}
+.ns-check-btn:not(:disabled):active {
+  background: var(--color-brand-yellow-active);
+}
 
 /* Preview area — reserves space for the header and bottom actions */
 .ns-preview-wrap {
@@ -1692,7 +1719,7 @@ body.inviter-mode .new-sticker-screen.ns-visible { transform: translateY(0); opa
   top: calc(var(--canvas-chrome-inset) * 2 + 42px);
   left: 0;
   right: 0;
-  bottom: 206px;
+  bottom: calc(var(--ns-bar-height) + env(safe-area-inset-bottom, 0px));
   overflow: hidden;
 }
 
@@ -1728,17 +1755,17 @@ body.inviter-mode .new-sticker-screen.ns-visible { transform: translateY(0); opa
 /* Bar area — fixed height, pinned to bottom */
 #nsBarArea {
   position: absolute;
-  bottom: 0;
+  bottom: env(safe-area-inset-bottom, 0px);
   left: 0;
   right: 0;
-  height: 206px;
-  z-index: var(--z-new-sticker);
+  height: var(--ns-bar-height);
+  z-index: 2;
 }
 
 .ns-bar {
   position: absolute; inset: 0;
   display: flex; gap: 12px; padding: 18px var(--canvas-chrome-inset) calc(var(--canvas-chrome-inset) + 22px);
-  align-items: center; justify-content: flex-end; overflow: hidden;
+  align-items: center; justify-content: flex-end; overflow: visible;
 }
 .ns-bar-col { flex-direction: column; }
 #nsBarLasso { justify-content: flex-end; }
@@ -1750,6 +1777,9 @@ body.inviter-mode .new-sticker-screen.ns-visible { transform: translateY(0); opa
 }
 .sticker-maker-pill {
   gap: 0;
+  max-width: calc(100% - 24px);
+  min-width: 0;
+  overflow: visible;
 }
 .sticker-maker-pill .selection-mode-buttons {
   gap: 6px;

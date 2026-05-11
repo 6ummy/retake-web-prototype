@@ -18,6 +18,13 @@ function getDoodleOpacity(doodleOpacityRef) {
   return clamp01(number > 1 ? number / 100 : number);
 }
 
+function getMagicPenOpacity(magicPenOpacityRef) {
+  const raw = magicPenOpacityRef?.current;
+  const number = Number(raw);
+  if (!Number.isFinite(number)) return 1;
+  return clamp01(number > 1 ? number / 100 : number);
+}
+
 function colorToRgba(color, opacity = 1) {
   if (typeof color !== 'string') return [255, 255, 255, 255];
   const alphaScale = clamp01(opacity);
@@ -135,6 +142,8 @@ export function useCanvasDrawing({
   activeToolRef,
   toolRadiusRef,
   eraserOpacityRef,
+  magicPenModeRef,
+  magicPenOpacityRef,
   doodleColorRef,
   doodleOpacityRef,
   doodleModeRef,
@@ -159,6 +168,10 @@ export function useCanvasDrawing({
   const isDrawingRef = useRef(false);
   const lastXRef = useRef(0);
   const lastYRef = useRef(0);
+  const shapeDraggingRef = useRef(false);
+  const shapeStartXRef = useRef(0);
+  const shapeStartYRef = useRef(0);
+  const shapePreviewDataRef = useRef(null);
   const strokeBaseDataRef = useRef(null);
   const trackDraggingRef = useRef(false);
   const fillLongPressTimerRef = useRef(null);
@@ -174,13 +187,23 @@ export function useCanvasDrawing({
     };
   }, [canvasRef]);
 
+  const getXYFromClient = useCallback((clientX, clientY) => {
+    const canvas = canvasRef.current;
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(canvas.width, (clientX - r.left) * (canvas.width / r.width))),
+      y: Math.max(0, Math.min(canvas.height, (clientY - r.top) * (canvas.height / r.height))),
+    };
+  }, [canvasRef]);
+
   const isDoodleEraseMode = useCallback(() => (
     activeToolRef.current === 'doodle' && doodleModeRef?.current === 'erase'
   ), [activeToolRef, doodleModeRef]);
 
   const isFreehandEraseMode = useCallback(() => (
-    activeToolRef.current === 'magicPen' || isDoodleEraseMode()
-  ), [activeToolRef, isDoodleEraseMode]);
+    (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') === 'freehand')
+    || isDoodleEraseMode()
+  ), [activeToolRef, isDoodleEraseMode, magicPenModeRef]);
 
   const clearActiveCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -213,8 +236,7 @@ export function useCanvasDrawing({
       if (strokeBaseDataRef.current) ctx.putImageData(strokeBaseDataRef.current, 0, 0);
       if (activeToolRef.current === 'magicPen') {
         ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 1;
-        drawCheckerboardMasked(ctx, scratchCanvas);
+        drawCheckerboardMasked(ctx, scratchCanvas, getMagicPenOpacity(magicPenOpacityRef));
       } else {
         ctx.globalCompositeOperation = 'destination-out';
         ctx.globalAlpha = activeToolRef.current === 'doodle' ? 1 : eraserOpacityRef.current;
@@ -241,7 +263,7 @@ export function useCanvasDrawing({
       ctx.stroke();
     }
     ctx.restore();
-  }, [activeToolRef, ctxRef, doodleColorRef, doodleOpacityRef, eraserOpacityRef, isFreehandEraseMode, penTypeRef, toolRadiusRef]);
+  }, [activeToolRef, ctxRef, doodleColorRef, doodleOpacityRef, eraserOpacityRef, isFreehandEraseMode, magicPenOpacityRef, penTypeRef, toolRadiusRef]);
 
   const commitCurrentStroke = useCallback(() => {
     const canvas = canvasRef.current;
@@ -252,10 +274,63 @@ export function useCanvasDrawing({
       type,
       sourceCanvas: canvas,
       maskCanvas: tool === 'magicPen' ? scratchCanvasRef.current : null,
+      opacity: tool === 'magicPen' ? getMagicPenOpacity(magicPenOpacityRef) : 1,
     });
     clearActiveCanvas();
     return !!committed;
-  }, [activeToolRef, canvasRef, clearActiveCanvas, onCommitStroke]);
+  }, [activeToolRef, canvasRef, clearActiveCanvas, magicPenOpacityRef, onCommitStroke]);
+
+  const drawMagicPenShapeMask = useCallback((ctx, x1, y1, x2, y2) => {
+    ctx.beginPath();
+    if ((magicPenModeRef?.current || 'freehand') === 'circle') {
+      const cx = (x1 + x2) / 2;
+      const cy = (y1 + y2) / 2;
+      const rx = Math.max(1, Math.abs(x2 - x1) / 2);
+      const ry = Math.max(1, Math.abs(y2 - y1) / 2);
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    const x = Math.min(x1, x2);
+    const y = Math.min(y1, y2);
+    ctx.fillRect(x, y, Math.abs(x2 - x1), Math.abs(y2 - y1));
+  }, [magicPenModeRef]);
+
+  const drawMagicPenShapePreview = useCallback((x1, y1, x2, y2) => {
+    const ctx = ctxRef.current;
+    const scratchCtx = scratchCtxRef.current;
+    const scratchCanvas = scratchCanvasRef.current;
+    if (!ctx || !scratchCtx || !scratchCanvas || !shapePreviewDataRef.current) return;
+    ctx.putImageData(shapePreviewDataRef.current, 0, 0);
+    scratchCtx.clearRect(0, 0, scratchCanvas.width, scratchCanvas.height);
+    scratchCtx.save();
+    scratchCtx.fillStyle = 'rgba(0,0,0,1)';
+    drawMagicPenShapeMask(scratchCtx, x1, y1, x2, y2);
+    scratchCtx.restore();
+    drawCheckerboardMasked(ctx, scratchCanvas, getMagicPenOpacity(magicPenOpacityRef));
+  }, [ctxRef, drawMagicPenShapeMask, magicPenOpacityRef]);
+
+  const commitMagicPenShape = useCallback((x1, y1, x2, y2) => {
+    const canvas = canvasRef.current;
+    const ctx = ctxRef.current;
+    const scratchCtx = scratchCtxRef.current;
+    const scratchCanvas = scratchCanvasRef.current;
+    if (!canvas || !ctx || !scratchCtx || !scratchCanvas) return false;
+    if (shapePreviewDataRef.current) ctx.putImageData(shapePreviewDataRef.current, 0, 0);
+    shapePreviewDataRef.current = null;
+    const minSize = 4;
+    if (Math.abs(x2 - x1) < minSize && Math.abs(y2 - y1) < minSize) {
+      scratchCtx.clearRect(0, 0, scratchCanvas.width, scratchCanvas.height);
+      return false;
+    }
+    scratchCtx.clearRect(0, 0, scratchCanvas.width, scratchCanvas.height);
+    scratchCtx.save();
+    scratchCtx.fillStyle = 'rgba(0,0,0,1)';
+    drawMagicPenShapeMask(scratchCtx, x1, y1, x2, y2);
+    scratchCtx.restore();
+    drawCheckerboardMasked(ctx, scratchCanvas, getMagicPenOpacity(magicPenOpacityRef));
+    return commitCurrentStroke();
+  }, [canvasRef, commitCurrentStroke, ctxRef, drawMagicPenShapeMask, magicPenOpacityRef]);
 
   const moveCursor = useCallback((cx, cy) => {
     const r = frameElRef.current.getBoundingClientRect();
@@ -266,6 +341,11 @@ export function useCanvasDrawing({
   }, [brushCursorRef, frameElRef]);
 
   const resetInteractionState = useCallback(() => {
+    if (shapeDraggingRef.current && shapePreviewDataRef.current && ctxRef.current) {
+      ctxRef.current.putImageData(shapePreviewDataRef.current, 0, 0);
+    }
+    shapeDraggingRef.current = false;
+    shapePreviewDataRef.current = null;
     strokeBaseDataRef.current = null;
     clearTimeout(fillLongPressTimerRef.current);
     fillLongPressTimerRef.current = null;
@@ -367,6 +447,14 @@ export function useCanvasDrawing({
       stickerSys.deselectAllStickers?.();
       if (!activeToolRef.current) return;
       const p = getXY(e);
+      if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') !== 'freehand') {
+        shapeDraggingRef.current = true;
+        shapeStartXRef.current = p.x;
+        shapeStartYRef.current = p.y;
+        shapePreviewDataRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        scratchCtxRef.current.clearRect(0, 0, sc.width, sc.height);
+        return;
+      }
       isDrawingRef.current = true; lastXRef.current = p.x; lastYRef.current = p.y;
       if (isFreehandEraseMode()) {
         strokeBaseDataRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -380,16 +468,31 @@ export function useCanvasDrawing({
     const onMouseMove = (e) => {
       if (!activeToolRef.current) return;
       moveCursor(e.clientX, e.clientY);
-      if (activeToolRef.current && brushCursorRef.current) brushCursorRef.current.style.display = 'block';
+      if (
+        brushCursorRef.current
+        && (
+          activeToolRef.current === 'doodle'
+          || isFreehandEraseMode()
+        )
+      ) {
+        brushCursorRef.current.style.display = 'block';
+      }
       if (activeToolRef.current === 'doodle' && !isDoodleEraseMode()) cancelFillLongPressIfMoved(e.clientX, e.clientY);
-      if (isDrawingRef.current) {
+      if (shapeDraggingRef.current) {
+        const p = getXYFromClient(e.clientX, e.clientY);
+        drawMagicPenShapePreview(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y);
+      } else if (isDrawingRef.current) {
         const p = getXY(e);
         paintAt(p.x, p.y, lastXRef.current, lastYRef.current);
         lastXRef.current = p.x; lastYRef.current = p.y;
       }
     };
     const onMouseUp = (e) => {
-      if (isDrawingRef.current) {
+      if (shapeDraggingRef.current) {
+        const p = getXYFromClient(e.clientX, e.clientY);
+        if (commitMagicPenShape(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y)) pushHistory();
+        shapeDraggingRef.current = false;
+      } else if (isDrawingRef.current) {
         clearFillLongPress();
         strokeBaseDataRef.current = null;
         if (commitCurrentStroke()) pushHistory();
@@ -410,7 +513,7 @@ export function useCanvasDrawing({
         activeToolRef.current
         && (
           activeToolRef.current === 'doodle'
-          || activeToolRef.current === 'magicPen'
+          || isFreehandEraseMode()
         )
         && brushCursorRef.current
       ) {
@@ -422,6 +525,14 @@ export function useCanvasDrawing({
       stickerSys.deselectAllStickers?.();
       if (!activeToolRef.current) return; e.preventDefault();
       const p = getXY(e);
+      if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') !== 'freehand') {
+        shapeDraggingRef.current = true;
+        shapeStartXRef.current = p.x;
+        shapeStartYRef.current = p.y;
+        shapePreviewDataRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        scratchCtxRef.current.clearRect(0, 0, sc.width, sc.height);
+        return;
+      }
       isDrawingRef.current = true; lastXRef.current = p.x; lastYRef.current = p.y;
       if (isFreehandEraseMode()) {
         strokeBaseDataRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -438,14 +549,22 @@ export function useCanvasDrawing({
       if (activeToolRef.current === 'doodle' && !isDoodleEraseMode() && e.touches[0]) {
         cancelFillLongPressIfMoved(e.touches[0].clientX, e.touches[0].clientY);
       }
-      if (isDrawingRef.current) {
+      if (shapeDraggingRef.current && e.touches[0]) {
+        const p = getXYFromClient(e.touches[0].clientX, e.touches[0].clientY);
+        drawMagicPenShapePreview(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y);
+      } else if (isDrawingRef.current) {
         const p = getXY(e);
         paintAt(p.x, p.y, lastXRef.current, lastYRef.current);
         lastXRef.current = p.x; lastYRef.current = p.y;
       }
     };
     const onTouchEnd = (e) => {
-      if (isDrawingRef.current) {
+      if (shapeDraggingRef.current) {
+        const t = e.changedTouches[0];
+        const p = t ? getXYFromClient(t.clientX, t.clientY) : { x: shapeStartXRef.current, y: shapeStartYRef.current };
+        if (commitMagicPenShape(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y)) pushHistory();
+        shapeDraggingRef.current = false;
+      } else if (isDrawingRef.current) {
         clearFillLongPress();
         strokeBaseDataRef.current = null;
         if (commitCurrentStroke()) pushHistory();
@@ -475,11 +594,38 @@ export function useCanvasDrawing({
       expandLeftPanel();
     };
     const onPanelMouseDown = (e) => { startTrackDrag(); applyTrackNorm(normFromClientY(e.clientY)); };
-    const onDocTrackMouseMove = (e) => { if (trackDraggingRef.current) applyTrackNorm(normFromClientY(e.clientY)); };
-    const onDocTrackMouseUp = () => { if (trackDraggingRef.current) endTrackDrag(); };
+    const onDocTrackMouseMove = (e) => {
+      if (shapeDraggingRef.current) {
+        const p = getXYFromClient(e.clientX, e.clientY);
+        drawMagicPenShapePreview(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y);
+      }
+      if (trackDraggingRef.current) applyTrackNorm(normFromClientY(e.clientY));
+    };
+    const onDocTrackMouseUp = (e) => {
+      if (shapeDraggingRef.current) {
+        const p = getXYFromClient(e.clientX, e.clientY);
+        if (commitMagicPenShape(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y)) pushHistory();
+        shapeDraggingRef.current = false;
+      }
+      if (trackDraggingRef.current) endTrackDrag();
+    };
     const onPanelTouchStart = (e) => { startTrackDrag(); applyTrackNorm(normFromClientY(e.touches[0].clientY)); };
-    const onDocTouchMove = (e) => { if (trackDraggingRef.current) applyTrackNorm(normFromClientY(e.touches[0].clientY)); };
-    const onDocTouchEnd = () => { if (trackDraggingRef.current) endTrackDrag(); };
+    const onDocTouchMove = (e) => {
+      if (shapeDraggingRef.current && e.touches[0]) {
+        const p = getXYFromClient(e.touches[0].clientX, e.touches[0].clientY);
+        drawMagicPenShapePreview(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y);
+      }
+      if (trackDraggingRef.current) applyTrackNorm(normFromClientY(e.touches[0].clientY));
+    };
+    const onDocTouchEnd = (e) => {
+      if (shapeDraggingRef.current) {
+        const t = e.changedTouches[0];
+        const p = t ? getXYFromClient(t.clientX, t.clientY) : { x: shapeStartXRef.current, y: shapeStartYRef.current };
+        if (commitMagicPenShape(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y)) pushHistory();
+        shapeDraggingRef.current = false;
+      }
+      if (trackDraggingRef.current) endTrackDrag();
+    };
 
     if (panel) {
       panel.addEventListener('mouseenter', onPanelMouseEnter);

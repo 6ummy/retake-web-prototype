@@ -85,6 +85,13 @@ export default function StickerPanel({ sys }) {
 
   const confirmLabel = nsSelectionMode === 'magic' && nsDetecting ? 'Detecting...' : 'Confirm';
   const showMagicAction = nsSelectionMode === 'magic' && nsPhase !== 'refine';
+  const nsCheckDisabled = nsPhase !== 'refine' && (!nsLassoCanConfirm || nsPhase === 'detecting' || nsDetecting);
+  const nsCheckLabel = nsPhase === 'refine'
+    ? 'Apply sticker'
+    : nsPhase === 'detecting' || nsDetecting
+      ? 'Detecting sticker'
+      : 'Confirm sticker';
+  const handleNsCheck = nsPhase === 'refine' ? nsApply : nsConfirmLasso;
 
   return (
     <>
@@ -161,6 +168,14 @@ export default function StickerPanel({ sys }) {
             onClick={() => closeNewStickerScreen(true)}
           />
           <p className="ns-title">New Sticker</p>
+          <SolidIconButton
+            className="ns-check-btn"
+            id="btnNsCheck"
+            icon="check"
+            label={nsCheckLabel}
+            disabled={nsCheckDisabled}
+            onClick={handleNsCheck}
+          />
         </div>
 
         <div className="ns-preview-wrap" id="nsPreviewWrap">

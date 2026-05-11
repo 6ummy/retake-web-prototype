@@ -35,13 +35,14 @@ body {
   left: 0;
   top: 0;
   width: 414px;
-  height: 750px;
+  height: 736px;
   object-fit: cover;
   opacity: 0;
   transition: opacity 0.7s ease;
   z-index: var(--z-live-media);
   pointer-events: none;
-  transform: scaleX(-1); /* mirror for selfie mode */
+  transform: none;
+  transform-origin: center center;
 }
 .camera-view.active { opacity: 1; pointer-events: auto; }
 
@@ -54,7 +55,7 @@ body {
   left: 4px;
   top: 77px;
   width: 422px;
-  height: 750px;
+  height: 736px;
   border-radius: 0;
   object-fit: cover;
   pointer-events: none;
@@ -160,7 +161,15 @@ body {
   font-size: var(--text-hero);
   line-height: 1.0;
 }
+.card-status {
+  margin: 0;
+  color: var(--surface-brand-muted);
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  line-height: 1.35;
+}
 .card-buttons { display: flex; gap: 10px; }
+.card-buttons.single-action { gap: 0; }
 
 /* ── Invite buttons ── */
 .btn {
@@ -176,8 +185,26 @@ body {
   transition: opacity 0.1s ease, transform 0.1s ease;
 }
 .btn:active { opacity: 0.78; transform: scale(0.97); }
+.btn:disabled {
+  cursor: default;
+  opacity: 0.56;
+  transform: none;
+}
 .btn-decline { background: var(--surface-brand-control); color: var(--color-ink); }
 .btn-accept  { background: var(--color-ink); color: var(--color-brand-yellow); }
+
+.invite-request-flow .invite-card {
+  top: 52%;
+}
+
+.invite-empty-flow .invite-card {
+  top: 50%;
+}
+
+.invite-empty-flow #mkSlotBg {
+  background-color: var(--color-canvas);
+  background-image: none;
+}
 
 
 /* ═════════════════════════════════════════════════════
@@ -454,7 +481,7 @@ body {
 .photo-container {
   position: absolute;
   left: 0; top: 0;
-  width: 414px; height: 750px;
+  width: 414px; height: 736px;
   overflow: hidden;
   z-index: var(--z-live-media);
   display: none;
@@ -508,6 +535,52 @@ body {
 }
 .cam-btn:active { opacity: 0.6; transform: scale(0.88); }
 
+/* Inviter Screen 3 camera controls reused for public invite links */
+.invite-request-flow .step3-camera-controls {
+  position: absolute;
+  left: 50%;
+  top: 89px;
+  transform: translateX(-50%) translateY(-14px);
+  z-index: var(--z-editor-chrome);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: var(--radius-pill);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-medium), transform var(--motion-enter);
+}
+
+.invite-request-flow .step3-camera-controls.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+.invite-request-flow .step3-camera-control-btn {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  border-radius: 50%;
+}
+
+.invite-request-flow .step3-camera-timer-badge {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 16px;
+  padding: 2px 4px;
+  border-radius: var(--radius-pill);
+  background: var(--color-brand-yellow);
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: 9px;
+  line-height: 1;
+}
+
 /* ── Timer active state ── */
 #btnTimer.timer-active svg { stroke: var(--color-brand-yellow-active); }
 .timer-badge {
@@ -531,7 +604,7 @@ body {
 .countdown-overlay {
   position: absolute;
   left: 4px; top: 77px;
-  width: 422px; height: 750px;
+  width: 422px; height: 736px;
   border-radius: 0;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
@@ -564,7 +637,7 @@ body {
 .flash-overlay {
   position: absolute;
   left: 4px; top: 77px;
-  width: 422px; height: 750px;
+  width: 422px; height: 736px;
   border-radius: 0;
   background: white;
   opacity: 0;
@@ -724,7 +797,7 @@ body {
 .dark-flash-overlay {
   position: absolute;
   left: 4px; top: 77px;
-  width: 422px; height: 750px;
+  width: 422px; height: 736px;
   border-radius: 0;
   background: #1A1A2E;
   opacity: 0; pointer-events: none;
@@ -735,9 +808,9 @@ body {
 #s6ScrimOverlay {
   position: absolute;
   left: 8px; top: 77px;
-  width: 414px; height: 750px;
+  width: 414px; height: 736px;
   border-radius: 32px;
-  /* top: matches .cam-top-gradient exactly (180px / 750px ≈ 24%) */
+  /* top: matches .cam-top-gradient exactly (180px / 736px ≈ 24%) */
   /* bottom: same values mirrored for bottom bar */
   background:
     linear-gradient(to top, rgba(0,0,0,0.52) 0%, rgba(0,0,0,0.22) 12%, rgba(0,0,0,0) 24%);
@@ -816,7 +889,7 @@ body {
 /* ── Drawing canvas overlay ── */
 #editCanvas {
   position: absolute; left: 0; top: 0;
-  width: 414px; height: 750px;
+  width: 414px; height: 736px;
   z-index: var(--z-edit-canvas); cursor: crosshair; touch-action: none;
 }
 #editCanvas.no-tool { cursor: default; pointer-events: none; }
@@ -1277,7 +1350,7 @@ input[type="range"]::-moz-range-thumb {
 #frameContainer {
   position: absolute;
   left: 8px; top: 77px;
-  width: 414px; height: 750px;
+  width: 414px; height: 736px;
   border-radius: 32px;
   overflow: hidden;
   z-index: var(--z-live-media);
@@ -1288,7 +1361,7 @@ input[type="range"]::-moz-range-thumb {
 #yunchaiPhoto {
   position: absolute;
   left: -8px; top: 0;
-  width: 430px; height: 750px;
+  width: 430px; height: 736px;
   object-fit: cover;
   z-index: var(--z-frame-art);
   pointer-events: none;
@@ -1329,7 +1402,7 @@ input[type="range"]::-moz-range-thumb {
 #mkSlotBg {
   position: absolute;
   left: 0; top: 0;
-  width: 422px; height: 750px;
+  width: 422px; height: 736px;
   z-index: var(--z-frame-bg);
   opacity: 1;
   transition: opacity 0.7s ease;
@@ -1601,7 +1674,7 @@ input[type="range"]::-moz-range-thumb {
 
 #stickerOverlay {
   position: absolute; left: 8px; top: 77px;
-  width: 414px; height: 750px;
+  width: 414px; height: 736px;
   pointer-events: none; z-index: var(--z-stickers);
 }
 #stickerOverlay.stk-active { pointer-events: auto; }

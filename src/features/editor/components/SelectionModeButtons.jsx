@@ -55,10 +55,13 @@ export default function SelectionModeButtons({
   onModeClick,
   disabled = false,
   className = '',
+  modes = SELECTION_MODES.map(item => item.mode),
   includeImport = false,
   importActive = false,
   onImport,
 }) {
+  const visibleModes = SELECTION_MODES.filter(item => modes.includes(item.mode));
+
   return (
     <div className={`selection-mode-buttons${className ? ` ${className}` : ''}`}>
       {includeImport && (
@@ -72,7 +75,7 @@ export default function SelectionModeButtons({
           <PhotoImportIcon />
         </button>
       )}
-      {SELECTION_MODES.map(item => (
+      {visibleModes.map(item => (
         <button
           key={item.mode}
           type="button"

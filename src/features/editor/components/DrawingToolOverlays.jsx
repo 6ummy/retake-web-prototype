@@ -2,6 +2,7 @@ import React from 'react';
 import GlassIconButton from '../../../components/ui/GlassIconButton.jsx';
 import ToolIcon from '../../../components/icons/ToolIcon.jsx';
 import OpacitySlider from './OpacitySlider.jsx';
+import SelectionModeButtons from './SelectionModeButtons.jsx';
 import {
   ToolPanelColorButton,
   ToolPanelColorPicker,
@@ -64,10 +65,13 @@ export default function DrawingToolOverlays({
   tmIn,
   tmLeftIn,
   tmPenBarIn,
+  tmMagicPenBarIn,
   doodleColor,
   doodleMode = 'draw',
   doodleOpacity = 100,
   penType,
+  magicPenMode = 'freehand',
+  magicPenOpacity = 100,
   tmUndoBtnDisabled,
   tmRedoBtnDisabled,
   onDone,
@@ -78,6 +82,8 @@ export default function DrawingToolOverlays({
   onColorPickerChange,
   onDoodleOpacityInput,
   onPenTypeClick,
+  onMagicPenModeClick,
+  onMagicPenOpacityInput,
 }) {
   const selectedSwatch = SWATCH_COLORS.some(({ color }) => color.toUpperCase() === doodleColor.toUpperCase());
 
@@ -180,6 +186,30 @@ export default function DrawingToolOverlays({
             </ToolPanelSegmentButton>
           </ToolPanelSegment>
         </ToolPanelRow>
+      </div>
+
+      {/* ── Magic Pen bar ── */}
+      <div id="tmMagicPenBar" className={tmMagicPenBarIn ? 'tm-in' : ''}>
+        <div className="eraser-shapes">
+          <SelectionModeButtons
+            mode={magicPenMode}
+            modes={['freehand', 'circle', 'rect']}
+            onModeClick={onMagicPenModeClick}
+          />
+        </div>
+        <div className="tm-divider"></div>
+        <OpacitySlider
+          inline
+          inputId="magicPenOpacitySlider"
+          valueClassName="tm-val"
+          value={magicPenOpacity}
+          valueLabel={`${magicPenOpacity}%`}
+          min={5}
+          max={100}
+          style={{ '--fill': `${magicPenOpacity}%` }}
+          onInput={onMagicPenOpacityInput}
+          onChange={onMagicPenOpacityInput}
+        />
       </div>
     </>
   );
