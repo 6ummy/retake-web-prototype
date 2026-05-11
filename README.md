@@ -1,0 +1,80 @@
+# Retake Prototype
+
+Retake is a mobile-first camera prototype for creating playful shared frames. The current codebase is centered on the inviter/editor flow: creating a frame, editing canvas content, naming the frame, capturing Retakes, and saving or sharing finished media.
+
+## Current Status
+
+- Active product flow: inviter/editor.
+- Invitee flow: intentionally removed so it can be rebuilt from scratch to match the updated inviter flow.
+- Source of truth: this repository, especially `src/`, `docs/design-system.md`, `docs/app-architecture.md`, and `docs/prototype-ledger.md`.
+- Production URL: https://retake-prototype.vercel.app
+- Local mobile test URL: https://192.168.0.72:5174/
+
+## Quick Start
+
+```bash
+npm install
+npm run dev
+```
+
+For mobile Safari testing on the same Wi-Fi network:
+
+```bash
+npm run dev:https
+```
+
+Then open:
+
+```txt
+https://192.168.0.72:5174/
+```
+
+The HTTPS script uses local certificates from `.cert/` when present. The `.cert/` folder is intentionally ignored by Git.
+
+## Project Shape
+
+```txt
+src/
+  components/
+    ui/              shared UI primitives
+    icons/           shared icon rendering
+  features/
+    editor/          shared canvas, drawing, sticker, text, and transform behavior
+    inviter/         active product flow
+  hooks/             shared React hooks
+  lib/               app helpers and route constants
+  styles/            token, base, glass, brand, control, overlay, and route CSS
+docs/
+  app-architecture.md
+  design-system.md
+  prototype-ledger.md
+api/
+  signup.js
+```
+
+## Design Rules
+
+Before UI, styling, component, layout, animation, or design-system changes, read `docs/design-system.md`.
+
+Retake should stay mobile-first, camera-forward, playful, tool-like, and fast. Reuse the shared UI primitives before creating new components, and keep reusable styling in the appropriate CSS layer under `src/styles/`.
+
+## Commands
+
+```bash
+npm run dev        # local Vite dev server
+npm run dev:https  # HTTPS LAN server for mobile Safari testing
+npm run build      # production build check
+npm run preview    # preview the production build
+```
+
+## GitHub Workflow
+
+- Keep `main` as the canonical checkpoint branch.
+- Commit meaningful prototype checkpoints with short, plain-language messages.
+- Run `npm run build` before pushing source or styling changes.
+- Use `docs/prototype-ledger.md` to record the current flow state and next rebuild decisions.
+- Do not commit `node_modules`, local certificates, Vercel local config, or build output.
+
+## Legacy Prototype Files
+
+The root still contains a few static prototype and marketing files from earlier iterations, including `landing.html`, `marketing.html`, `index-v2.html`, `index-inviter.html`, and `retake-ig.html`. Treat the React app under `src/` and the docs under `docs/` as the current working source of truth.
