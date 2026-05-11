@@ -5,16 +5,16 @@ This file tracks the status quo of the prototype so GitHub can act as the source
 ## Current Checkpoint
 
 - Date: 2026-05-11
-- Branch: `main`
-- Latest checkpoint commit: `8c92caa` - `Remove invitee flow for rebuild`
+- Branch: `codex/invitee-flow`
+- Latest checkpoint commit: in progress - invitee rebuild branch
 - Production URL: https://retake-prototype.vercel.app
 - Local mobile test URL: https://192.168.0.72:5174/
 
 ## Product Status
 
 - Inviter/editor flow is the active prototype.
-- Invitee flow has been removed intentionally.
-- Next invitee work should start from a fresh implementation that matches the updated inviter visual language, component structure, and interaction model.
+- Invitee rebuild is in progress on `codex/invitee-flow`.
+- Shared inviter/invitee camera, viewfinder, review, and control features should live in shared editor modules so changes apply to both flows unless explicitly directed otherwise.
 - Signup remains available through `api/signup.js`.
 
 ## Source Of Truth
@@ -30,6 +30,8 @@ This file tracks the status quo of the prototype so GitHub can act as the source
 ```txt
 /           -> local React entry, redirects to /inviter
 /inviter    -> active frame creator and editor prototype
+/invite/:id -> invitee accept/camera/review/submit flow
+/invitee?id=:id -> local invitee testing alias
 ```
 
 Vercel rewrites still serve static pages for the public prototype:
@@ -37,6 +39,8 @@ Vercel rewrites still serve static pages for the public prototype:
 ```txt
 /           -> landing.html
 /inviter    -> retake-ig.html
+/invite/:id -> index.html
+/invitee    -> index.html
 /signup     -> api/signup.js
 ```
 

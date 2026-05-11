@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import '../../styles/inviter.css';
-import GlassSurface from '../../components/ui/GlassSurface';
 import SolidIconButton from '../../components/ui/SolidIconButton';
 import { useToast } from '../editor/hooks/useToast';
 import { useStickerSystem } from '../editor/hooks/useStickerSystem';
@@ -12,6 +11,7 @@ import { useTextTool } from '../editor/hooks/useTextTool';
 import useInviterLayerStack from '../editor/hooks/useInviterLayerStack.js';
 import useMediaTransform from '../editor/hooks/useMediaTransform';
 import { useEditName } from './hooks/useEditName';
+import { createInvite, uploadFrame } from '../../lib/api.js';
 import StickerPanel from '../editor/components/StickerPanel';
 import TextToolOverlay from '../editor/components/TextToolOverlay';
 import DrawingToolOverlays from '../editor/components/DrawingToolOverlays';
@@ -22,8 +22,12 @@ import UndoRedoCluster from '../editor/components/UndoRedoCluster';
 import Toast from '../../components/ui/Toast';
 import VerticalToolbar from './components/VerticalToolbar';
 import BottomBar from './components/BottomBar';
-import Step3CameraControls from './components/Step3CameraControls';
-import Step3ZoomControl from './components/Step3ZoomControl';
+import RetakeCameraBottomBar from '../editor/components/RetakeCameraBottomBar.jsx';
+import RetakeCameraControls from '../editor/components/RetakeCameraControls.jsx';
+import { RetakeCountdownOverlay, RetakeRecordingStroke, RetakeScreenFlash } from '../editor/components/RetakeCameraOverlays.jsx';
+import RetakeCameraStage from '../editor/components/RetakeCameraStage.jsx';
+import RetakeReviewToolbar from '../editor/components/RetakeReviewToolbar.jsx';
+import RetakeZoomControl from '../editor/components/RetakeZoomControl.jsx';
 import PhotoInputs from './components/PhotoInputs';
 import EditNamePopup from './components/EditNamePopup';
 import IntroCard from './components/IntroCard';
@@ -1700,8 +1704,33 @@ export default function InviterPage() {
       }
       return;
     }
-    showToast('Invite flow reset for rebuild');
-  }, [buildStep3PhotoBlob, buildStep3VideoBlob, frameName, shareBlob, showToast, step3Mode]);
+    try {
+      const frameDataUrl = await buildFrameDataUrl();
+      const upload = await uploadFrame({ frameDataUrl, frameName });
+      const invite = await createInvite({
+        frameUrl: upload.url,
+        frameName,
+        username: 'yunchai',
+      });
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: 'Retake invite',
+            text: `${frameName} is ready for your Retake`,
+            url: invite.inviteUrl,
+          });
+          return;
+        } catch (err) {
+          if (err?.name === 'AbortError') return;
+        }
+      }
+      await navigator.clipboard?.writeText(invite.inviteUrl);
+      showToast('Invite link copied');
+    } catch (err) {
+      console.warn('[step3] Invite creation failed:', err);
+      showToast(err?.message || 'Could not create invite');
+    }
+  }, [buildFrameDataUrl, buildStep3PhotoBlob, buildStep3VideoBlob, frameName, shareBlob, showToast, step3Mode]);
 
   const handleStep3FlashToggle = useCallback(async () => {
     if (!step3CameraReady) return;
@@ -2137,82 +2166,34 @@ export default function InviterPage() {
           height="736"
           aria-hidden="true"
         />
-        {isStep3 && (
-          <div
-            className={`step3-media-layer step3-media-layer--${step3Mode}${step3Recording ? ' is-recording' : ''}`}
-            onPointerDown={handleStep3PointerDown}
-            onPointerMove={handleStep3PointerMove}
-            onPointerUp={handleStep3PointerUp}
-            onPointerCancel={handleStep3PointerCancel}
-          >
-            {isStep3Live && (
-              <>
-                <video
-                  className="step3-camera-video"
-                  ref={step3VideoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  style={step3CameraTransform.style}
-                />
-                {!step3CameraReady && (
-                  <div className="step3-camera-fallback">
-                    {step3CameraIssue || 'Camera preview'}
-                  </div>
-                )}
-              </>
-            )}
-            {isStep3PhotoReview && step3PhotoUrl && (
-              <img className="step3-captured-photo" src={step3PhotoUrl} alt="" draggable="false" />
-            )}
-            {isStep3VideoReview && step3VideoUrl && (
-              <video
-                className="step3-review-video"
-                src={step3VideoUrl}
-                autoPlay
-                loop
-                muted
-                playsInline
-              />
-            )}
-          </div>
-        )}
+        <RetakeCameraStage
+          mode={step3Mode}
+          recording={step3Recording}
+          videoRef={step3VideoRef}
+          cameraStyle={step3CameraTransform.style}
+          cameraReady={step3CameraReady}
+          cameraIssue={step3CameraIssue}
+          photoUrl={step3PhotoUrl}
+          videoUrl={step3VideoUrl}
+          onPointerDown={handleStep3PointerDown}
+          onPointerMove={handleStep3PointerMove}
+          onPointerUp={handleStep3PointerUp}
+          onPointerCancel={handleStep3PointerCancel}
+        />
       </FrameCanvas>
 
-      {step3Recording && (
-        <svg
-          className="step3-recording-stroke"
-          viewBox="0 0 414 736"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        >
-          <path
-            className="step3-recording-stroke-path"
-            d="M 207 0 H 20 Q 0 0 0 20 V 716 Q 0 736 20 736 H 394 Q 414 736 414 716 V 20 Q 414 0 394 0 H 207"
-            pathLength="1"
-            style={{ strokeDasharray: `${step3RecordingProgress} 1` }}
-          />
-        </svg>
-      )}
+      <RetakeRecordingStroke visible={step3Recording} progress={step3RecordingProgress} />
 
-      {isStep3Countdown && (
-        <div className="step3-countdown-overlay" aria-live="polite">
-          {step3CountdownValue}
-        </div>
-      )}
+      <RetakeCountdownOverlay value={step3CountdownValue} />
 
       {isStep3Live && (
-        <div
-          className={[
-            'step3-screen-flash',
-            step3ScreenFlashActive || (step3Recording && step3UsesScreenFlash) ? 'visible' : '',
-            step3Recording && step3UsesScreenFlash ? 'recording' : '',
-          ].filter(Boolean).join(' ')}
-          aria-hidden="true"
+        <RetakeScreenFlash
+          visible={step3ScreenFlashActive || (step3Recording && step3UsesScreenFlash)}
+          recording={step3Recording && step3UsesScreenFlash}
         />
       )}
 
-      <Step3CameraControls
+      <RetakeCameraControls
         visible={isStep3Live && !isStep3CaptureBusy && !stickerMakerVisible}
         flashAvailable={step3CameraReady}
         flashEnabled={step3FlashEnabled}
@@ -2222,7 +2203,7 @@ export default function InviterPage() {
         onFlip={handleStep3FlipCamera}
       />
 
-      <Step3ZoomControl
+      <RetakeZoomControl
         visible={isStep3Live && !isStep3CaptureBusy && !stickerMakerVisible}
         zoomOptions={step3ZoomOptions}
         zoomMode={step3ZoomMode}
@@ -2279,7 +2260,7 @@ export default function InviterPage() {
       )}
 
       {isStep3Review && !isStep3CaptureBusy && !stickerMakerVisible && (
-        <VerticalToolbar
+        <RetakeReviewToolbar
           visible={toolsVisible}
           out={toolsOut}
           collapsed={toolsCollapsed}
@@ -2299,39 +2280,20 @@ export default function InviterPage() {
       )}
 
       {isStep3 && !isStep3CaptureBusy && !stickerMakerVisible && (
-        <GlassSurface className={`step3-bottom-bar visible${bottomBarOut ? ' out' : ''}`} id="step3BottomBar">
-          <SolidIconButton
-            className={isStep3Review ? 'step3-retake-btn' : 'step3-circle-btn'}
-            icon="arrowLeft"
-            label={isStep3Review ? 'Retake photo or video' : 'Back'}
-            shape={isStep3Review ? 'pill' : 'circle'}
-            onClick={handleStep3Back}
-          >
-            {isStep3Review ? <span className="step3-retake-label">Retake</span> : null}
-          </SolidIconButton>
-          <button
-            type="button"
-            className="s6-frame-title-btn step3-frame-title-btn"
-            aria-label="Name your frame"
-            onClick={openEditName}
-          >
-            <span className="s6-frame-title-text">{frameName}</span>
-          </button>
-          <div className="step3-bottom-actions">
-            <SolidIconButton
-              className="step3-circle-btn"
-              icon="library"
-              label="Saved frames"
-              onClick={openSavedFrames}
-            />
-            <SolidIconButton
-              className="step3-share-btn"
-              icon="share"
-              label={isStep3Review ? 'Share Retake' : 'Share frame'}
-              onClick={handleStep3ShareRetake}
-            />
-          </div>
-        </GlassSurface>
+        <RetakeCameraBottomBar
+          visible
+          out={bottomBarOut}
+          review={isStep3Review}
+          title={frameName}
+          titleLabel="Name your frame"
+          leftLabel={isStep3Review ? 'Retake photo or video' : 'Back'}
+          onLeft={handleStep3Back}
+          onTitle={openEditName}
+          secondaryLabel="Saved frames"
+          onSecondary={openSavedFrames}
+          primaryLabel={isStep3Review ? 'Share Retake' : 'Share frame'}
+          onPrimary={handleStep3ShareRetake}
+        />
       )}
 
       <DrawingToolOverlays

@@ -5,6 +5,7 @@ import './styles/base.css';
 import './styles/glass.css';
 import './styles/brand.css';
 import './styles/controls.css';
+import './styles/camera.css';
 import './styles/overlays.css';
 import App from './App.jsx';
 

@@ -42,6 +42,9 @@ export function emojiToDataURL(emoji) {
 export function loadImage(src, timeoutMs = 3000) {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    if (typeof src === 'string' && /^https?:\/\//i.test(src)) {
+      img.crossOrigin = 'anonymous';
+    }
     const timer = setTimeout(() => reject(new Error('Image load timeout')), timeoutMs);
     img.onload = () => { clearTimeout(timer); resolve(img); };
     img.onerror = () => { clearTimeout(timer); reject(new Error('Image load error')); };

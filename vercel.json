@@ -6,6 +6,8 @@
     { "source": "/",        "destination": "/landing.html" },
     { "source": "/prototype", "destination": "/index.html" },
     { "source": "/prototype/:path*", "destination": "/index.html" },
+    { "source": "/invite/:path*", "destination": "/index.html" },
+    { "source": "/invitee", "destination": "/index.html" },
     { "source": "/inviter", "destination": "/retake-ig.html" }
   ]
 }
