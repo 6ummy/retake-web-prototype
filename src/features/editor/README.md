@@ -1,10 +1,10 @@
 # Editor Feature
 
-Shared canvas/tool behavior belongs here as it is extracted from the inviter and invitee flows. Good candidates include drawing overlays, stickers, text tools, eraser controls, undo/redo, brush sizing, opacity controls, and canvas utilities.
+Shared canvas/tool behavior belongs here as it is extracted from product flows. Good candidates include drawing overlays, stickers, text tools, eraser controls, undo/redo, brush sizing, opacity controls, and canvas utilities.
 
 ## Layering Model
 
-Editor layering is app-wide and shared by inviter and invitee flows. Keep z-index tokens in `src/styles/tokens.css` and use semantic tokens instead of raw `z-index` values.
+Editor layering is app-wide and shared by product flows. Keep z-index tokens in `src/styles/tokens.css` and use semantic tokens instead of raw `z-index` values.
 
 Composition/media layers should stay below app chrome and overlays:
 
@@ -14,10 +14,6 @@ Composition/media layers should stay below app chrome and overlays:
 - `--z-inviter-media-doodle-pen: 30` inviter locked doodle/pen strokes, not transformable
 - `--z-inviter-media-sticker: 40` inviter stickers, movable with two-finger transform in editing screens
 - `--z-inviter-media-transparent-pen: 50` inviter locked transparent pen strokes, not transformable
-- `--z-invitee-media-gallery: 60` invitee camera/gallery media
-- `--z-invitee-media-doodle-pen: 70` invitee locked doodle/pen strokes
-- `--z-invitee-media-sticker: 80` invitee stickers
-- `--z-invitee-media-transparent-pen: 90` invitee locked transparent pen strokes
 
 App/editor UI layers sit above all user media:
 

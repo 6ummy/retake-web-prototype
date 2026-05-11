@@ -16,7 +16,7 @@ Retake uses a code-first design system. Code tokens and reusable components are 
 - `brand.css`: solid Retake brand moments. Use it for yellow cards, popups, sheets, invite cards, share/name popups, and brand buttons.
 - `controls.css`: shared button and pill material classes. Use it for glass, solid, and brand control materials before adding route-specific positioning.
 - `overlays.css`: shared overlay structure. Use it for scrims, confirmation dialogs, modal positioning, bottom sheets, and reusable overlay transitions.
-- `invitee.css` and `inviter.css`: route-specific layout and choreography only.
+- `inviter.css`: route-specific layout and choreography only.
 
 ## Tokens
 

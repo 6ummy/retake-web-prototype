@@ -1,3 +1,3 @@
 # Inviter Feature
 
-The inviter flow owns frame creation, editor orchestration, frame naming, upload, and invite link sharing.
+The inviter flow owns frame creation, editor orchestration, frame naming, capture, save, and finished-media sharing.

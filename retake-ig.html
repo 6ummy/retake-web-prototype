@@ -1604,8 +1604,8 @@
         <path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
       </svg>
     </button>
-    <!-- Copy invite link — icon circle -->
-    <button class="s6-circle-btn" id="btnCopyLink" aria-label="Copy invite link">
+    <!-- Share reset placeholder — icon circle -->
+    <button class="s6-circle-btn" id="btnCopyLink" aria-label="Share unavailable">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
       </svg>
@@ -1776,10 +1776,10 @@
   <!-- Share popup -->
   <div class="share-pop" id="sharePop">
     <div>
-      <p class="s7-pop-title">Share your frame!</p>
-      <p class="s7-pop-dim">Invite a friend</p>
+      <p class="s7-pop-title">Share paused</p>
+      <p class="s7-pop-dim">Flow reset</p>
     </div>
-    <p class="s7-pop-subtitle" id="sharePopSubtitle">Send them this link — they'll step right into your frame and take a photo</p>
+    <p class="s7-pop-subtitle" id="sharePopSubtitle">Invite flow reset for rebuild.</p>
     <!-- uploading state -->
     <p class="s7-pop-subtitle" id="sharePopUploading" style="display:none;opacity:0.6">Uploading your frame…</p>
     <!-- error state -->
@@ -2981,18 +2981,16 @@
       btn.style.pointerEvents = 'none';
     }
 
-    const inviteUrl = await ensureInviteUrl();
+    const shareTargetUrl = await ensureInviteUrl();
 
     btn.style.opacity = '';
     btn.style.pointerEvents = '';
 
-    /* Use invite URL if upload succeeded, otherwise fall back to current page URL
+    /* Use a generated URL if available, otherwise fall back to current page URL
        so the native share sheet always opens regardless */
-    const shareUrl  = inviteUrl || location.href;
-    const shareTitle = `${frameName} ✦ You're invited`;
-    const shareText  = inviteUrl
-      ? `I saved you a spot in my frame. Tap to add your photo — takes 10 seconds 📸`
-      : `Check out my Retake frame: ${frameName}`;
+    const shareUrl  = shareTargetUrl || location.href;
+    const shareTitle = `${frameName} ✦ Retake`;
+    const shareText  = `Check out my Retake frame: ${frameName}`;
 
     if (navigator.share) {
       try {
@@ -3002,7 +3000,7 @@
       /* Desktop fallback: copy invite URL (or page URL) to clipboard */
       try {
         await navigator.clipboard.writeText(shareUrl);
-        showToast('Invite link copied!');
+        showToast('Share link copied!');
       } catch(e) {
         showToast('Copy this link: ' + shareUrl);
       }
@@ -3037,7 +3035,7 @@
   $('btnEditNameDone').addEventListener('click', saveEditName);
   $('editNameInput').addEventListener('keydown', e => { if (e.key === 'Enter') saveEditName(); });
 
-  /* ── Upload frame to Vercel Blob, return invite URL ── */
+  /* ── Share reset placeholder ── */
   let _currentInviteUrl = '';
 
   function sharePopState(state) {
@@ -3611,84 +3609,12 @@
   }
 
   async function ensureInviteUrl() {
-    if (_currentInviteUrl) return _currentInviteUrl;
-    if (_uploadPromise) return _uploadPromise;   /* deduplicate concurrent calls */
-
-    _uploadPromise = (async () => {
-      const frameName = $('frameNameDisplay').textContent.trim() || 'my-frame';
-      const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-      if (isLocal) return null;
-
-      let frameDataUrl;
-      try {
-        frameDataUrl = await renderFrameExportDataUrl(0.5);
-      } catch(e) { return null; }
-
-      try {
-        const resp = await fetch('/api/upload-frame', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ frameDataUrl, frameName }),
-        });
-        if (!resp.ok) throw new Error();
-        const { url } = await resp.json();
-        const base = 'https://retake.it.com';
-        _currentInviteUrl = `${base}/invitee?frame=${encodeURIComponent(url)}&name=${encodeURIComponent(frameName)}`;
-        return _currentInviteUrl;
-      } catch(e) { return null; }
-    })();
-
-    const result = await _uploadPromise;
-    _uploadPromise = null;
-    return result;
+    return null;
   }
 
   async function uploadFrameAndShowLink() {
-    const frameName = $('frameNameDisplay').textContent.trim() || 'my-frame';
-
-    // Upload only works on the deployed Vercel site — not on local Python server
-    const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-    if (isLocal) {
-      sharePopState('error');
-      $('sharePopError').innerHTML = 'Upload only works on <a href="https://retake.it.com/index-inviter.html" style="color:#FF3B30">retake.it.com</a> — open that to test the share flow.';
-      return;
-    }
-
-    // Export at 50% resolution to stay well under Vercel's 4.5MB request limit
-    // (full PNG of a photo can exceed the limit after base64 encoding)
-    let frameDataUrl;
-    try {
-      frameDataUrl = await renderFrameExportDataUrl(0.5);
-    } catch (e) {
-      console.error('[share] toDataURL failed:', e);
-      sharePopState('error');
-      return;
-    }
-
-    sharePopState('uploading');
-
-    try {
-      const resp = await fetch('/api/upload-frame', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frameDataUrl, frameName }),
-      });
-      if (!resp.ok) throw new Error(await resp.text());
-      const { url } = await resp.json();
-
-      const encodedFrame = encodeURIComponent(url);
-      const encodedName  = encodeURIComponent(frameName);
-      const base = location.origin.includes('localhost') || location.origin.includes('127.0.0.1')
-        ? location.origin
-        : 'https://retake.it.com';
-      _currentInviteUrl = `${base}/invitee?frame=${encodedFrame}&name=${encodedName}`;
-
-      $('shareCode').textContent = _currentInviteUrl;
-      sharePopState('ready');
-    } catch (err) {
-      console.error('[share] upload error:', err);
-      sharePopState('error');
-    }
+    sharePopState('error');
+    $('sharePopError').textContent = 'Invite flow reset for rebuild.';
   }
 
   /* ── Copy link → open share panel ── */
@@ -3703,10 +3629,10 @@
   $('btnShareRetry').addEventListener('click', uploadFrameAndShowLink);
 
   $('btnCopyCode').addEventListener('click', async () => {
-    if (!_currentInviteUrl) { showToast('Link not ready — please wait'); return; }
+    if (!_currentInviteUrl) { showToast('Invite flow reset for rebuild'); return; }
     try {
       await navigator.clipboard.writeText(_currentInviteUrl);
-      showToast('Invite link copied!');
+      showToast('Share link copied!');
     } catch(e) {
       /* Clipboard blocked (HTTP / permissions) — select the text so user can copy manually */
       const codeEl = $('shareCode');
@@ -3750,7 +3676,7 @@
   /* ── Intro: Start blank ── */
   $('btnStartBlank').addEventListener('click', async () => {
     introPhotoFlow = false;
-    /* Fully transparent canvas — checker shows, invitee will fill Layer 1 */
+    /* Fully transparent canvas — checker shows, capture flow will fill Layer 1 */
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     mainUndoStack = [snapshot()]; mainRedoStack = [];
     syncHistoryBtns();

@@ -13,7 +13,7 @@
 - App entry points live in `src/main.jsx` and `src/App.jsx`.
 - Shared UI primitives live in `src/components/ui`.
 - Editor-specific behavior lives in `src/features/editor`.
-- Route-specific styles live in `src/styles/invitee.css` and `src/styles/inviter.css`.
+- Route-specific styles live in `src/styles/inviter.css`.
 - Shared styling belongs in the relevant layer under `src/styles`: `tokens.css`, `base.css`, `glass.css`, `brand.css`, `controls.css`, and `overlays.css`.
 
 ## Design-System Rules

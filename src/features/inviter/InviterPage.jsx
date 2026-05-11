@@ -11,7 +11,6 @@ import { useHistory } from '../editor/hooks/useHistory';
 import { useTextTool } from '../editor/hooks/useTextTool';
 import useInviterLayerStack from '../editor/hooks/useInviterLayerStack.js';
 import useMediaTransform from '../editor/hooks/useMediaTransform';
-import { useSharePanel } from './hooks/useSharePanel';
 import { useEditName } from './hooks/useEditName';
 import StickerPanel from '../editor/components/StickerPanel';
 import TextToolOverlay from '../editor/components/TextToolOverlay';
@@ -27,7 +26,6 @@ import Step3CameraControls from './components/Step3CameraControls';
 import Step3ZoomControl from './components/Step3ZoomControl';
 import PhotoInputs from './components/PhotoInputs';
 import EditNamePopup from './components/EditNamePopup';
-import SharePopup from './components/SharePopup';
 import IntroCard from './components/IntroCard';
 import { INVITER_FLOW_STATES } from './state.js';
 import {
@@ -517,26 +515,6 @@ export default function InviterPage() {
   }, [step3CameraCapabilities]);
   const step3UsesHardwareTorch = step3FacingMode === 'environment' && step3CameraCapabilities.torch;
   const step3UsesScreenFlash = step3FlashEnabled && !step3UsesHardwareTorch;
-
-  const {
-    sharePanelVisible, setSharePanelVisible,
-    shareCode, shareUrl,
-    handleCopyLink, handleCopyCode, handleShare,
-  } = useSharePanel({
-    frameName,
-    showToast,
-    setScrimVisible,
-    getFrameDataUrl: async () => {
-      if (activeToolRef.current) exitCurrentTool(true);
-      const out = document.createElement('canvas');
-      const { width, height } = getCanvasSize();
-      out.width = width;
-      out.height = height;
-      const outCtx = out.getContext('2d');
-      await layerStack.renderFrameLayersToContext(outCtx, { width, height });
-      return out.toDataURL('image/png');
-    },
-  });
 
   const {
     editNameVisible, editNameInputValue, setEditNameInputValue,
@@ -1722,8 +1700,8 @@ export default function InviterPage() {
       }
       return;
     }
-    await handleShare();
-  }, [buildStep3PhotoBlob, buildStep3VideoBlob, frameName, handleShare, shareBlob, showToast, step3Mode]);
+    showToast('Invite flow reset for rebuild');
+  }, [buildStep3PhotoBlob, buildStep3VideoBlob, frameName, shareBlob, showToast, step3Mode]);
 
   const handleStep3FlashToggle = useCallback(async () => {
     if (!step3CameraReady) return;
@@ -1762,18 +1740,12 @@ export default function InviterPage() {
     await applyStep3HardwareZoom(zoom);
   }, [applyStep3HardwareZoom]);
 
-  const handleSavedFramesCopyLink = useCallback(async () => {
-    setSavedFramesVisible(false);
-    await handleCopyLink();
-  }, [handleCopyLink]);
-
   const canHandleS2GalleryGesture = useCallback(() => (
     s2GalleryAdjustable
     && !step3Mode
     && editorVisible
     && !activeToolRef.current
     && !textToolActive
-    && !sharePanelVisible
     && !savedFramesVisible
     && !editNameVisible
     && !confirmVisible
@@ -1784,7 +1756,6 @@ export default function InviterPage() {
     editorVisible,
     s2GalleryAdjustable,
     savedFramesVisible,
-    sharePanelVisible,
     step3Mode,
     stickerSys.stickerPanelVisible,
     textToolActive,
@@ -2069,9 +2040,8 @@ export default function InviterPage() {
   const handleScrimClick = useCallback(() => {
     if (editNameVisible) { saveEditName(); return; }
     if (savedFramesVisible) { closeSavedFrames(); return; }
-    if (sharePanelVisible) { setSharePanelVisible(false); setScrimVisible(false); }
     if (stickerSys.stickerPanelVisible) stickerSys.closePanel();
-  }, [closeSavedFrames, editNameVisible, saveEditName, savedFramesVisible, sharePanelVisible, setSharePanelVisible, stickerSys]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [closeSavedFrames, editNameVisible, saveEditName, savedFramesVisible, stickerSys]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSwatchClick = useCallback((color) => {
     doodleColorRef.current = color;
@@ -2129,10 +2099,8 @@ export default function InviterPage() {
   const isStep3Countdown = step3CountdownValue !== null;
   const isStep3CaptureBusy = step3Recording || isStep3Countdown;
   const stickerMakerVisible = stickerSys.newStickerVisible;
-  const flowState = sharePanelVisible
-    ? INVITER_FLOW_STATES.SHARING
-    : savedFramesVisible
-      ? INVITER_FLOW_STATES.STEP3_SAVED_FRAMES
+  const flowState = savedFramesVisible
+    ? INVITER_FLOW_STATES.STEP3_SAVED_FRAMES
     : isStep3Live
       ? INVITER_FLOW_STATES.STEP3_LIVE
     : isStep3VideoReview
@@ -2404,8 +2372,6 @@ export default function InviterPage() {
         onSave={saveEditName}
       />
 
-      <SharePopup visible={sharePanelVisible} shareCode={shareCode} shareUrl={shareUrl} onCopyCode={handleCopyCode} />
-
       <div className={`saved-frames-sheet${savedFramesVisible ? ' visible' : ''}`} id="savedFramesSheet">
         <div className="saved-frames-handle"></div>
         <div className="saved-frames-header">
@@ -2417,7 +2383,6 @@ export default function InviterPage() {
         </div>
         <div className="saved-frames-actions">
           <button className="saved-frame-action" onClick={() => saveFrameLocal('made')}>Save this frame</button>
-          <button className="saved-frame-action" onClick={handleSavedFramesCopyLink}>Copy invite link</button>
         </div>
         <div className="saved-frames-grid">
           {savedFrames.length === 0 ? (
