@@ -1,6 +1,45 @@
 /** Resolve after `ms` milliseconds. */
 export const delay = (ms) => new Promise(r => setTimeout(r, ms));
 
+export const MAGIC_SELECTION_DASH_CYCLE = 11;
+
+const MAGIC_SELECTION_STROKE = {
+  color: 'rgba(255,255,255,0.92)',
+  dash: [7, 4],
+  width: 2,
+};
+
+export function drawMagicSelectionStroke(ctx, {
+  points,
+  closed = false,
+  dashOffset = 0,
+  drawPath,
+} = {}) {
+  if (!ctx) return false;
+  if (!drawPath && (!points || points.length < 2)) return false;
+
+  ctx.save();
+  ctx.strokeStyle = MAGIC_SELECTION_STROKE.color;
+  ctx.lineWidth = MAGIC_SELECTION_STROKE.width;
+  ctx.setLineDash(MAGIC_SELECTION_STROKE.dash);
+  ctx.lineDashOffset = -dashOffset;
+  ctx.beginPath();
+
+  if (drawPath) {
+    drawPath(ctx);
+  } else {
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i += 1) {
+      ctx.lineTo(points[i].x, points[i].y);
+    }
+    if (closed) ctx.closePath();
+  }
+
+  ctx.stroke();
+  ctx.restore();
+  return true;
+}
+
 /** Convert a data-URL string to a Blob. */
 export function dataUrlToBlob(dataUrl) {
   const [header, base64] = dataUrl.split(',');
@@ -42,6 +81,9 @@ export function emojiToDataURL(emoji) {
 export function loadImage(src, timeoutMs = 3000) {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    if (typeof src === 'string' && /^https?:\/\//i.test(src)) {
+      img.crossOrigin = 'anonymous';
+    }
     const timer = setTimeout(() => reject(new Error('Image load timeout')), timeoutMs);
     img.onload = () => { clearTimeout(timer); resolve(img); };
     img.onerror = () => { clearTimeout(timer); reject(new Error('Image load error')); };

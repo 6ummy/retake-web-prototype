@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { drawCheckerboardMasked } from './useInviterLayerStack.js';
+import { drawMagicSelectionStroke, MAGIC_SELECTION_DASH_CYCLE } from '../utils/canvas.js';
+import { detectSmartSelectionMask } from '../utils/smartSelection.js';
 
 const DOODLE_FILL_LONG_PRESS_MS = 450;
 const DOODLE_FILL_MOVE_TOLERANCE = 8;
@@ -136,9 +138,28 @@ function floodFill(ctx, startX, startY, fillColor, fillOpacity = 1) {
   return changed;
 }
 
+function drawMaskToCanvas(mask, width, height) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.createImageData(width, height);
+  const data = imageData.data;
+  for (let i = 0; i < mask.length; i += 1) {
+    if (!mask[i]) continue;
+    data[i * 4] = 0;
+    data[i * 4 + 1] = 0;
+    data[i * 4 + 2] = 0;
+    data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
 export function useCanvasDrawing({
   canvasRef,
   ctxRef,
+  selectionCanvasRef,
   activeToolRef,
   toolRadiusRef,
   eraserOpacityRef,
@@ -159,6 +180,9 @@ export function useCanvasDrawing({
   expandLeftPanel,
   applyTrackNorm,
   normFromClientY,
+  showToast,
+  getMagicSelectionSourceCanvas,
+  enabled = true,
   onInitialIntro,
   onCommitStroke,
   onCommitCanvasFill,
@@ -176,6 +200,59 @@ export function useCanvasDrawing({
   const trackDraggingRef = useRef(false);
   const fillLongPressTimerRef = useRef(null);
   const fillPressRef = useRef(null);
+  const magicLassoPtsRef = useRef([]);
+  const magicLassoDownRef = useRef(false);
+  const magicLassoRafRef = useRef(null);
+  const magicLassoDashRef = useRef(0);
+  const magicMaskRef = useRef(null);
+  const magicMaskUndoStackRef = useRef([]);
+  const magicMaskRedoStackRef = useRef([]);
+  const magicRefineStartMaskRef = useRef(null);
+  const magicRefineDownRef = useRef(false);
+  const magicRefModeRef = useRef('pen');
+  const magicSelectPhaseRef = useRef('lasso');
+  const [magicSelectPhase, setMagicSelectPhase] = useState('lasso');
+  const [magicSelectConfirmDisabled, setMagicSelectConfirmDisabled] = useState(true);
+  const [magicSelectDetecting, setMagicSelectDetecting] = useState(false);
+  const [magicSelectRefMode, setMagicSelectRefMode] = useState('pen');
+  const [magicUndoDisabled, setMagicUndoDisabled] = useState(true);
+  const [magicRedoDisabled, setMagicRedoDisabled] = useState(true);
+
+  const setMagicSelectionPhase = useCallback((phase) => {
+    magicSelectPhaseRef.current = phase;
+    setMagicSelectPhase(phase);
+  }, []);
+
+  const syncMagicHistoryButtons = useCallback(() => {
+    setMagicUndoDisabled(magicMaskUndoStackRef.current.length <= 1);
+    setMagicRedoDisabled(magicMaskRedoStackRef.current.length === 0);
+  }, []);
+
+  const resetMagicMaskHistory = useCallback((mask = null) => {
+    magicMaskUndoStackRef.current = mask ? [mask.slice()] : [];
+    magicMaskRedoStackRef.current = [];
+    magicRefineStartMaskRef.current = null;
+    syncMagicHistoryButtons();
+  }, [syncMagicHistoryButtons]);
+
+  const masksEqual = useCallback((a, b) => {
+    if (!a || !b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }, []);
+
+  const commitMagicMaskHistory = useCallback(() => {
+    const mask = magicMaskRef.current;
+    const startMask = magicRefineStartMaskRef.current;
+    magicRefineStartMaskRef.current = null;
+    if (!mask || !startMask || masksEqual(mask, startMask)) return;
+    if (magicMaskUndoStackRef.current.length >= 30) magicMaskUndoStackRef.current.shift();
+    magicMaskUndoStackRef.current.push(mask.slice());
+    magicMaskRedoStackRef.current = [];
+    syncMagicHistoryButtons();
+  }, [masksEqual, syncMagicHistoryButtons]);
 
   const getXY = useCallback((e) => {
     const canvas = canvasRef.current;
@@ -214,6 +291,211 @@ export function useCanvasDrawing({
       scratchCtxRef.current.clearRect(0, 0, scratchCanvasRef.current.width, scratchCanvasRef.current.height);
     }
   }, [canvasRef, ctxRef]);
+
+  const clearMagicSelectionOverlay = useCallback(() => {
+    const sel = selectionCanvasRef?.current;
+    if (!sel) return;
+    const selCtx = sel.getContext('2d');
+    selCtx.clearRect(0, 0, sel.width, sel.height);
+    sel.classList.remove('sel-active');
+    sel.style.opacity = '1';
+  }, [selectionCanvasRef]);
+
+  const renderMagicLasso = useCallback((closed = false) => {
+    const sel = selectionCanvasRef?.current;
+    const pts = magicLassoPtsRef.current;
+    if (!sel) return;
+    const selCtx = sel.getContext('2d');
+    selCtx.clearRect(0, 0, sel.width, sel.height);
+    if (pts.length < 2) {
+      sel.classList.remove('sel-active');
+      return;
+    }
+    sel.classList.add('sel-active');
+    sel.style.opacity = '1';
+    drawMagicSelectionStroke(selCtx, {
+      points: pts,
+      closed,
+      dashOffset: magicLassoDashRef.current,
+    });
+  }, [selectionCanvasRef]);
+
+  const animateMagicLasso = useCallback(() => {
+    renderMagicLasso(!magicLassoDownRef.current);
+    magicLassoDashRef.current = (magicLassoDashRef.current + 0.5) % MAGIC_SELECTION_DASH_CYCLE;
+    magicLassoRafRef.current = requestAnimationFrame(animateMagicLasso);
+  }, [renderMagicLasso]);
+
+  const renderMagicMask = useCallback((mask = magicMaskRef.current) => {
+    const sel = selectionCanvasRef?.current;
+    if (!sel || !mask) return;
+    const selCtx = sel.getContext('2d');
+    const maskCanvas = drawMaskToCanvas(mask, sel.width, sel.height);
+    selCtx.clearRect(0, 0, sel.width, sel.height);
+    drawCheckerboardMasked(selCtx, maskCanvas, 1, {
+      light: 'rgba(255,255,255,0.95)',
+      dark: 'rgba(120,128,148,0.78)',
+      size: 18,
+    });
+    sel.classList.add('sel-active');
+    sel.style.opacity = String(getMagicPenOpacity(magicPenOpacityRef));
+  }, [magicPenOpacityRef, selectionCanvasRef]);
+
+  const resetMagicSelection = useCallback(() => {
+    if (magicLassoRafRef.current) cancelAnimationFrame(magicLassoRafRef.current);
+    magicLassoRafRef.current = null;
+    magicLassoPtsRef.current = [];
+    magicLassoDownRef.current = false;
+    magicMaskRef.current = null;
+    resetMagicMaskHistory();
+    magicRefineDownRef.current = false;
+    magicRefModeRef.current = 'pen';
+    setMagicSelectionPhase('lasso');
+    setMagicSelectConfirmDisabled(true);
+    setMagicSelectDetecting(false);
+    setMagicSelectRefMode('pen');
+    clearMagicSelectionOverlay();
+  }, [clearMagicSelectionOverlay, resetMagicMaskHistory, setMagicSelectionPhase]);
+
+  const getMagicEventPoint = useCallback((e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : (e.changedTouches ? e.changedTouches[0] : e);
+    return {
+      x: Math.max(0, Math.min(canvas.width, (t.clientX - rect.left) * (canvas.width / rect.width))),
+      y: Math.max(0, Math.min(canvas.height, (t.clientY - rect.top) * (canvas.height / rect.height))),
+    };
+  }, [canvasRef]);
+
+  const paintMagicSelectionMask = useCallback((point) => {
+    const mask = magicMaskRef.current;
+    const canvas = canvasRef.current;
+    if (!mask || !canvas) return;
+    const radius = Math.max(1, toolRadiusRef.current);
+    const r2 = radius * radius;
+    const val = magicRefModeRef.current === 'pen' ? 1 : 0;
+    const x0 = Math.max(0, Math.floor(point.x - radius));
+    const x1 = Math.min(canvas.width - 1, Math.ceil(point.x + radius));
+    const y0 = Math.max(0, Math.floor(point.y - radius));
+    const y1 = Math.min(canvas.height - 1, Math.ceil(point.y + radius));
+    for (let py = y0; py <= y1; py += 1) {
+      for (let px = x0; px <= x1; px += 1) {
+        const dx = px - point.x;
+        const dy = py - point.y;
+        if (dx * dx + dy * dy <= r2) mask[py * canvas.width + px] = val;
+      }
+    }
+    renderMagicMask(mask);
+  }, [canvasRef, renderMagicMask, toolRadiusRef]);
+
+  const confirmMagicSelection = useCallback(async () => {
+    if (magicLassoPtsRef.current.length < 5 || magicSelectDetecting) return;
+    if (magicLassoRafRef.current) cancelAnimationFrame(magicLassoRafRef.current);
+    magicLassoRafRef.current = null;
+    renderMagicLasso(true);
+    setMagicSelectDetecting(true);
+    setMagicSelectConfirmDisabled(true);
+    setMagicSelectionPhase('detecting');
+    try {
+      let sourceCanvas = await getMagicSelectionSourceCanvas?.();
+      if (!sourceCanvas) {
+        const canvas = canvasRef.current;
+        sourceCanvas = document.createElement('canvas');
+        sourceCanvas.width = canvas.width;
+        sourceCanvas.height = canvas.height;
+        sourceCanvas.getContext('2d').drawImage(canvas, 0, 0);
+      }
+      const poly = magicLassoPtsRef.current.map(point => [point.x, point.y]);
+      const mask = await detectSmartSelectionMask(sourceCanvas, poly, { logPrefix: 'transparent-pen' });
+      setMagicSelectDetecting(false);
+      if (!mask) {
+        showToast?.('No selection found - draw a bigger area');
+        resetMagicSelection();
+        return;
+      }
+      magicMaskRef.current = mask;
+      resetMagicMaskHistory(mask);
+      setMagicSelectionPhase('refine');
+      renderMagicMask(mask);
+      syncCursor?.();
+      if (brushCursorRef.current) brushCursorRef.current.style.display = 'none';
+    } catch (err) {
+      console.warn('[transparent-pen] Magic selection failed:', err);
+      setMagicSelectDetecting(false);
+      showToast?.('Select failed - try again');
+      resetMagicSelection();
+    }
+  }, [
+    brushCursorRef,
+    canvasRef,
+    getMagicSelectionSourceCanvas,
+    magicSelectDetecting,
+    renderMagicLasso,
+    renderMagicMask,
+    resetMagicMaskHistory,
+    resetMagicSelection,
+    setMagicSelectionPhase,
+    showToast,
+    syncCursor,
+  ]);
+
+  const applyMagicSelection = useCallback(() => {
+    const canvas = canvasRef.current;
+    const ctx = ctxRef.current;
+    const mask = magicMaskRef.current;
+    if (!canvas || !ctx || !mask) return false;
+    const maskCanvas = drawMaskToCanvas(mask, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawCheckerboardMasked(ctx, maskCanvas, getMagicPenOpacity(magicPenOpacityRef));
+    const committed = onCommitStroke?.({
+      type: 'magicPenStroke',
+      sourceCanvas: canvas,
+      maskCanvas,
+      opacity: getMagicPenOpacity(magicPenOpacityRef),
+    });
+    clearActiveCanvas();
+    resetMagicSelection();
+    if (committed) pushHistory();
+    return !!committed;
+  }, [canvasRef, clearActiveCanvas, ctxRef, magicPenOpacityRef, onCommitStroke, pushHistory, resetMagicSelection]);
+
+  const setMagicSelectionRefMode = useCallback((mode) => {
+    magicRefModeRef.current = mode;
+    setMagicSelectRefMode(mode);
+  }, []);
+
+  const undoMagicSelection = useCallback(() => {
+    if (magicMaskUndoStackRef.current.length <= 1) {
+      showToast?.('Nothing to undo');
+      syncMagicHistoryButtons();
+      return false;
+    }
+    const current = magicMaskUndoStackRef.current.pop();
+    magicMaskRedoStackRef.current.push(current);
+    const previous = magicMaskUndoStackRef.current[magicMaskUndoStackRef.current.length - 1];
+    magicMaskRef.current = previous.slice();
+    renderMagicMask(magicMaskRef.current);
+    syncMagicHistoryButtons();
+    return true;
+  }, [renderMagicMask, showToast, syncMagicHistoryButtons]);
+
+  const redoMagicSelection = useCallback(() => {
+    if (!magicMaskRedoStackRef.current.length) {
+      showToast?.('Nothing to redo');
+      syncMagicHistoryButtons();
+      return false;
+    }
+    const next = magicMaskRedoStackRef.current.pop();
+    magicMaskUndoStackRef.current.push(next.slice());
+    magicMaskRef.current = next.slice();
+    renderMagicMask(magicMaskRef.current);
+    syncMagicHistoryButtons();
+    return true;
+  }, [renderMagicMask, showToast, syncMagicHistoryButtons]);
+
+  const refreshMagicSelectionPreview = useCallback(() => {
+    if (magicMaskRef.current) renderMagicMask(magicMaskRef.current);
+  }, [renderMagicMask]);
 
   const paintAt = useCallback((x, y, fx, fy) => {
     const ctx = ctxRef.current;
@@ -353,7 +635,8 @@ export function useCanvasDrawing({
     if (scratchCtxRef.current && scratchCanvasRef.current) {
       scratchCtxRef.current.clearRect(0, 0, scratchCanvasRef.current.width, scratchCanvasRef.current.height);
     }
-  }, [ctxRef]);
+    resetMagicSelection();
+  }, [ctxRef, resetMagicSelection]);
 
   const isOverLiveDecorator = useCallback((clientX, clientY) => {
     const items = stickerSys.placedStickersRef?.current || [];
@@ -428,8 +711,56 @@ export function useCanvasDrawing({
     fillPressRef.current = null;
   }, []);
 
+  const startMagicSelectionPointer = useCallback((e) => {
+    e.preventDefault();
+    stickerSys.deselectAllStickers?.();
+    const point = getMagicEventPoint(e);
+    if (magicSelectPhaseRef.current === 'refine' && magicMaskRef.current) {
+      magicRefineDownRef.current = true;
+      magicRefineStartMaskRef.current = magicMaskRef.current.slice();
+      paintMagicSelectionMask(point);
+      return;
+    }
+    if (magicSelectPhaseRef.current === 'detecting') return;
+    if (magicLassoRafRef.current) cancelAnimationFrame(magicLassoRafRef.current);
+    magicLassoPtsRef.current = [point];
+    magicLassoDownRef.current = true;
+    magicLassoDashRef.current = 0;
+    setMagicSelectionPhase('lasso');
+    setMagicSelectConfirmDisabled(true);
+    clearMagicSelectionOverlay();
+    animateMagicLasso();
+  }, [animateMagicLasso, clearMagicSelectionOverlay, getMagicEventPoint, paintMagicSelectionMask, setMagicSelectionPhase, stickerSys]);
+
+  const moveMagicSelectionPointer = useCallback((e) => {
+    e.preventDefault();
+    if (magicRefineDownRef.current && magicMaskRef.current) {
+      paintMagicSelectionMask(getMagicEventPoint(e));
+      return;
+    }
+    if (!magicLassoDownRef.current) return;
+    magicLassoPtsRef.current.push(getMagicEventPoint(e));
+  }, [getMagicEventPoint, paintMagicSelectionMask]);
+
+  const endMagicSelectionPointer = useCallback((e) => {
+    if (magicRefineDownRef.current) {
+      e?.preventDefault?.();
+      magicRefineDownRef.current = false;
+      commitMagicMaskHistory();
+      return;
+    }
+    if (!magicLassoDownRef.current) return;
+    e?.preventDefault?.();
+    magicLassoDownRef.current = false;
+    const valid = magicLassoPtsRef.current.length >= 5;
+    setMagicSelectConfirmDisabled(!valid);
+    renderMagicLasso(valid);
+  }, [commitMagicMaskHistory, renderMagicLasso]);
+
   useEffect(() => {
+    if (!enabled) return undefined;
     const canvas = canvasRef.current;
+    if (!canvas) return undefined;
     const ctx = canvas.getContext('2d');
     ctxRef.current = ctx;
 
@@ -447,7 +778,12 @@ export function useCanvasDrawing({
       stickerSys.deselectAllStickers?.();
       if (!activeToolRef.current) return;
       const p = getXY(e);
-      if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') !== 'freehand') {
+      const magicMode = magicPenModeRef?.current || 'freehand';
+      if (activeToolRef.current === 'magicPen' && magicMode === 'magic') {
+        startMagicSelectionPointer(e);
+        return;
+      }
+      if (activeToolRef.current === 'magicPen' && magicMode !== 'freehand') {
         shapeDraggingRef.current = true;
         shapeStartXRef.current = p.x;
         shapeStartYRef.current = p.y;
@@ -467,6 +803,10 @@ export function useCanvasDrawing({
     };
     const onMouseMove = (e) => {
       if (!activeToolRef.current) return;
+      if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') === 'magic') {
+        if (magicLassoDownRef.current || magicRefineDownRef.current) moveMagicSelectionPointer(e);
+        return;
+      }
       moveCursor(e.clientX, e.clientY);
       if (
         brushCursorRef.current
@@ -488,7 +828,9 @@ export function useCanvasDrawing({
       }
     };
     const onMouseUp = (e) => {
-      if (shapeDraggingRef.current) {
+      if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') === 'magic') {
+        endMagicSelectionPointer(e);
+      } else if (shapeDraggingRef.current) {
         const p = getXYFromClient(e.clientX, e.clientY);
         if (commitMagicPenShape(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y)) pushHistory();
         shapeDraggingRef.current = false;
@@ -500,6 +842,9 @@ export function useCanvasDrawing({
       }
     };
     const onMouseLeave = () => {
+      if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') === 'magic') {
+        endMagicSelectionPointer();
+      }
       if (isDrawingRef.current) {
         clearFillLongPress();
         strokeBaseDataRef.current = null;
@@ -525,7 +870,12 @@ export function useCanvasDrawing({
       stickerSys.deselectAllStickers?.();
       if (!activeToolRef.current) return; e.preventDefault();
       const p = getXY(e);
-      if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') !== 'freehand') {
+      const magicMode = magicPenModeRef?.current || 'freehand';
+      if (activeToolRef.current === 'magicPen' && magicMode === 'magic') {
+        startMagicSelectionPointer(e);
+        return;
+      }
+      if (activeToolRef.current === 'magicPen' && magicMode !== 'freehand') {
         shapeDraggingRef.current = true;
         shapeStartXRef.current = p.x;
         shapeStartYRef.current = p.y;
@@ -546,6 +896,10 @@ export function useCanvasDrawing({
     };
     const onTouchMove = (e) => {
       if (!activeToolRef.current) return; e.preventDefault();
+      if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') === 'magic') {
+        moveMagicSelectionPointer(e);
+        return;
+      }
       if (activeToolRef.current === 'doodle' && !isDoodleEraseMode() && e.touches[0]) {
         cancelFillLongPressIfMoved(e.touches[0].clientX, e.touches[0].clientY);
       }
@@ -559,7 +913,9 @@ export function useCanvasDrawing({
       }
     };
     const onTouchEnd = (e) => {
-      if (shapeDraggingRef.current) {
+      if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') === 'magic') {
+        endMagicSelectionPointer(e);
+      } else if (shapeDraggingRef.current) {
         const t = e.changedTouches[0];
         const p = t ? getXYFromClient(t.clientX, t.clientY) : { x: shapeStartXRef.current, y: shapeStartYRef.current };
         if (commitMagicPenShape(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y)) pushHistory();
@@ -593,32 +949,59 @@ export function useCanvasDrawing({
       panel?.classList.remove('tm-resizing');
       expandLeftPanel();
     };
-    const onPanelMouseDown = (e) => { startTrackDrag(); applyTrackNorm(normFromClientY(e.clientY)); };
+    const onPanelMouseDown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      startTrackDrag();
+      applyTrackNorm(normFromClientY(e.clientY));
+    };
     const onDocTrackMouseMove = (e) => {
-      if (shapeDraggingRef.current) {
+      if (trackDraggingRef.current) {
+        e.preventDefault();
+        applyTrackNorm(normFromClientY(e.clientY));
+        return;
+      }
+      if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') === 'magic') {
+        if (magicLassoDownRef.current || magicRefineDownRef.current) moveMagicSelectionPointer(e);
+      } else if (shapeDraggingRef.current) {
         const p = getXYFromClient(e.clientX, e.clientY);
         drawMagicPenShapePreview(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y);
       }
-      if (trackDraggingRef.current) applyTrackNorm(normFromClientY(e.clientY));
     };
     const onDocTrackMouseUp = (e) => {
-      if (shapeDraggingRef.current) {
+      if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') === 'magic') {
+        endMagicSelectionPointer(e);
+      } else if (shapeDraggingRef.current) {
         const p = getXYFromClient(e.clientX, e.clientY);
         if (commitMagicPenShape(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y)) pushHistory();
         shapeDraggingRef.current = false;
       }
       if (trackDraggingRef.current) endTrackDrag();
     };
-    const onPanelTouchStart = (e) => { startTrackDrag(); applyTrackNorm(normFromClientY(e.touches[0].clientY)); };
+    const onPanelTouchStart = (e) => {
+      if (!e.touches[0]) return;
+      e.preventDefault();
+      e.stopPropagation();
+      startTrackDrag();
+      applyTrackNorm(normFromClientY(e.touches[0].clientY));
+    };
     const onDocTouchMove = (e) => {
-      if (shapeDraggingRef.current && e.touches[0]) {
+      if (trackDraggingRef.current && e.touches[0]) {
+        e.preventDefault();
+        applyTrackNorm(normFromClientY(e.touches[0].clientY));
+        return;
+      }
+      if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') === 'magic') {
+        if (e.touches[0]) moveMagicSelectionPointer(e);
+      } else if (shapeDraggingRef.current && e.touches[0]) {
         const p = getXYFromClient(e.touches[0].clientX, e.touches[0].clientY);
         drawMagicPenShapePreview(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y);
       }
-      if (trackDraggingRef.current) applyTrackNorm(normFromClientY(e.touches[0].clientY));
     };
     const onDocTouchEnd = (e) => {
-      if (shapeDraggingRef.current) {
+      if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') === 'magic') {
+        endMagicSelectionPointer(e);
+      } else if (shapeDraggingRef.current) {
         const t = e.changedTouches[0];
         const p = t ? getXYFromClient(t.clientX, t.clientY) : { x: shapeStartXRef.current, y: shapeStartYRef.current };
         if (commitMagicPenShape(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y)) pushHistory();
@@ -630,11 +1013,11 @@ export function useCanvasDrawing({
     if (panel) {
       panel.addEventListener('mouseenter', onPanelMouseEnter);
       panel.addEventListener('mousedown', onPanelMouseDown);
-      panel.addEventListener('touchstart', onPanelTouchStart, { passive: true });
+      panel.addEventListener('touchstart', onPanelTouchStart, { passive: false });
     }
     document.addEventListener('mousemove', onDocTrackMouseMove);
     document.addEventListener('mouseup', onDocTrackMouseUp);
-    document.addEventListener('touchmove', onDocTouchMove, { passive: true });
+    document.addEventListener('touchmove', onDocTouchMove, { passive: false });
     document.addEventListener('touchend', onDocTouchEnd, { passive: true });
 
     const overlay = stickerSys.stickerOverlayRef.current;
@@ -646,6 +1029,7 @@ export function useCanvasDrawing({
       clearTimeout(fillLongPressTimerRef.current);
       fillLongPressTimerRef.current = null;
       fillPressRef.current = null;
+      resetMagicSelection();
       canvas.removeEventListener('mousedown', onMouseDown);
       canvas.removeEventListener('mousemove', onMouseMove);
       canvas.removeEventListener('mouseup', onMouseUp);
@@ -665,7 +1049,22 @@ export function useCanvasDrawing({
       document.removeEventListener('touchend', onDocTouchEnd);
       if (overlay) overlay.removeEventListener('click', stickerSys.deselectAllStickers);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { resetInteractionState };
+  return {
+    resetInteractionState,
+    resetMagicSelection,
+    magicSelectPhase,
+    magicSelectConfirmDisabled,
+    magicSelectDetecting,
+    magicSelectRefMode,
+    magicUndoDisabled,
+    magicRedoDisabled,
+    confirmMagicSelection,
+    applyMagicSelection,
+    undoMagicSelection,
+    redoMagicSelection,
+    setMagicSelectionRefMode,
+    refreshMagicSelectionPreview,
+  };
 }

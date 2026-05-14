@@ -5,8 +5,9 @@ Retake currently has one product flow and one shared capability area.
 ## Product Flows
 
 - Inviter: creates a frame, edits canvas content, names the frame, captures Retakes, and saves or shares finished media.
-- Invitee: intentionally removed on 2026-05-11 so it can be rebuilt from scratch against the updated inviter flow.
+- Invitee: fresh rebuild in progress. It loads real invite data, gates camera permission behind accept, opens the shared frame with a live viewfinder, captures photo/video Retakes, and submits finished media.
 - Editor: shared canvas/tool behavior used by product flows, including drawing, stickers, text, eraser, undo/redo, brush sizing, opacity controls, and overlays.
+- Shared Retake camera/review: camera controls, viewfinder, zoom, capture overlays, review toolbar, and camera bottom bar are shared editor components used by inviter and invitee.
 
 ## Target File Shape
 
@@ -38,7 +39,7 @@ Pages should orchestrate flows. Hooks should own behavior. UI components should 
 
 - Vercel API routes handle signup.
 - Airtable currently stores signup email records.
-- Invite/frame upload API routes were removed with the old invitee flow and should be redesigned with the invitee rebuild.
+- Vercel Blob stores frame uploads, invite metadata, Retake media, and Retake submission metadata for the invitee rebuild.
 
 ## Backend Direction
 

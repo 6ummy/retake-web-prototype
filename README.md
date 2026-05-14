@@ -4,8 +4,8 @@ Retake is a mobile-first camera prototype for creating playful shared frames. Th
 
 ## Current Status
 
-- Active product flow: inviter/editor.
-- Invitee flow: intentionally removed so it can be rebuilt from scratch to match the updated inviter flow.
+- Active product flows: inviter/editor and invitee rebuild.
+- Invitee flow: rebuilt from scratch to share camera/viewfinder/review components with inviter S3.
 - Source of truth: this repository, especially `src/`, `docs/design-system.md`, `docs/app-architecture.md`, and `docs/prototype-ledger.md`.
 - Production URL: https://retake-prototype.vercel.app
 - Local mobile test URL: https://192.168.0.72:5174/
@@ -41,6 +41,7 @@ src/
   features/
     editor/          shared canvas, drawing, sticker, text, and transform behavior
     inviter/         active product flow
+    invitee/         invite accept, camera, review, and submit flow
   hooks/             shared React hooks
   lib/               app helpers and route constants
   styles/            token, base, glass, brand, control, overlay, and route CSS
@@ -50,6 +51,11 @@ docs/
   prototype-ledger.md
 api/
   signup.js
+  invite.js
+  upload-frame.js
+  frame.js
+  blob-upload.js
+  retake.js
 ```
 
 ## Design Rules
@@ -66,6 +72,16 @@ npm run dev:https  # HTTPS LAN server for mobile Safari testing
 npm run build      # production build check
 npm run preview    # preview the production build
 ```
+
+## Invitee Testing
+
+Create an invite from the inviter S3 share action, then open:
+
+```txt
+https://192.168.0.72:5174/invite/:inviteId
+```
+
+For local UI against a deployed API, set `VITE_API_ORIGIN` before starting Vite.
 
 ## GitHub Workflow
 
