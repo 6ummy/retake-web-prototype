@@ -1,8 +1,12 @@
 import React from 'react';
+import Button from '../../../components/ui/Button.jsx';
 import GlassIconButton from '../../../components/ui/GlassIconButton.jsx';
+import SolidIconButton from '../../../components/ui/SolidIconButton.jsx';
+import SolidSurface from '../../../components/ui/SolidSurface.jsx';
 import ToolIcon from '../../../components/icons/ToolIcon.jsx';
 import OpacitySlider from './OpacitySlider.jsx';
 import SelectionModeButtons from './SelectionModeButtons.jsx';
+import StickerRefineControls from './StickerRefineControls.jsx';
 import {
   ToolPanelColorButton,
   ToolPanelColorPicker,
@@ -72,6 +76,10 @@ export default function DrawingToolOverlays({
   penType,
   magicPenMode = 'freehand',
   magicPenOpacity = 100,
+  magicSelectPhase = 'lasso',
+  magicSelectConfirmDisabled = true,
+  magicSelectDetecting = false,
+  magicSelectRefMode = 'pen',
   tmUndoBtnDisabled,
   tmRedoBtnDisabled,
   onDone,
@@ -84,6 +92,10 @@ export default function DrawingToolOverlays({
   onPenTypeClick,
   onMagicPenModeClick,
   onMagicPenOpacityInput,
+  onMagicSelectBack,
+  onMagicSelectConfirm,
+  onMagicSelectRefMode,
+  onMagicSelectApply,
 }) {
   const selectedSwatch = SWATCH_COLORS.some(({ color }) => color.toUpperCase() === doodleColor.toUpperCase());
 
@@ -106,6 +118,17 @@ export default function DrawingToolOverlays({
       >
         <ToolIcon type="check" />
       </button>
+
+      {magicPenMode === 'magic' && (
+        <button
+          id="tmBackBtn"
+          className={`tool-mode-el${tmIn ? ' tm-in' : ''}`}
+          aria-label="Back"
+          onClick={onMagicSelectBack || (() => onMagicPenModeClick?.('freehand'))}
+        >
+          <ToolIcon type="arrowLeft" />
+        </button>
+      )}
 
       {/* ── Left size-track panel ── */}
       <div id="tmLeftPanel" ref={tmLeftPanelRef} className={tmLeftIn ? 'tm-in' : ''}>
@@ -189,27 +212,69 @@ export default function DrawingToolOverlays({
       </div>
 
       {/* ── Magic Pen bar ── */}
-      <div id="tmMagicPenBar" className={tmMagicPenBarIn ? 'tm-in' : ''}>
-        <div className="eraser-shapes">
-          <SelectionModeButtons
-            mode={magicPenMode}
-            modes={['freehand', 'circle', 'rect']}
-            onModeClick={onMagicPenModeClick}
-          />
-        </div>
-        <div className="tm-divider"></div>
-        <OpacitySlider
-          inline
-          inputId="magicPenOpacitySlider"
-          valueClassName="tm-val"
-          value={magicPenOpacity}
-          valueLabel={`${magicPenOpacity}%`}
-          min={5}
-          max={100}
-          style={{ '--fill': `${magicPenOpacity}%` }}
-          onInput={onMagicPenOpacityInput}
-          onChange={onMagicPenOpacityInput}
-        />
+      <div id="tmMagicPenBar" className={`${tmMagicPenBarIn ? 'tm-in' : ''}${magicPenMode === 'magic' ? ' magic-select-mode' : ''}`}>
+        {magicPenMode === 'magic' ? (
+          magicSelectPhase === 'refine' ? (
+            <StickerRefineControls
+              idPrefix="MagicPen"
+              opacityInputId="magicPenOpacitySlider"
+              opacityValueId="magicPenOpacityVal"
+              applyLabel="Apply"
+              applyClassName="magic-apply-btn"
+              refMode={magicSelectRefMode}
+              opacity={magicPenOpacity}
+              onRefMode={onMagicSelectRefMode}
+              onOpacityInput={onMagicPenOpacityInput}
+              onApply={onMagicSelectApply}
+            />
+          ) : (
+            <div className="magic-step">
+              <span className="magic-action-hint">
+                {magicSelectPhase === 'detecting' || magicSelectDetecting ? 'Finding the area...' : 'Draw around the area to make transparent'}
+              </span>
+              <SolidSurface className="magic-action-row" role="group" aria-label="Transparent pen smart selection actions">
+                <SolidIconButton
+                  className="magic-back-btn"
+                  icon="arrowLeft"
+                  label="Back"
+                  onClick={onMagicSelectBack || (() => onMagicPenModeClick?.('freehand'))}
+                />
+                <Button
+                  className="magic-confirm-btn"
+                  variant={null}
+                  material="solid-yellow"
+                  disabled={magicSelectConfirmDisabled || magicSelectDetecting || magicSelectPhase === 'detecting'}
+                  onClick={onMagicSelectConfirm}
+                >
+                  {magicSelectPhase === 'detecting' || magicSelectDetecting ? 'Detecting...' : 'Confirm'}
+                </Button>
+              </SolidSurface>
+            </div>
+          )
+        ) : (
+          <>
+            <div className="eraser-shapes">
+              <SelectionModeButtons
+                mode={magicPenMode}
+                modes={['freehand', 'circle', 'rect', 'magic']}
+                onModeClick={onMagicPenModeClick}
+              />
+            </div>
+            <div className="tm-divider"></div>
+            <OpacitySlider
+              inline
+              inputId="magicPenOpacitySlider"
+              valueClassName="tm-val"
+              value={magicPenOpacity}
+              valueLabel={`${magicPenOpacity}%`}
+              min={5}
+              max={100}
+              style={{ '--fill': `${magicPenOpacity}%` }}
+              onInput={onMagicPenOpacityInput}
+              onChange={onMagicPenOpacityInput}
+            />
+          </>
+        )}
       </div>
     </>
   );

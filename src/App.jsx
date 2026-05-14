@@ -14,6 +14,7 @@ export default function App() {
         {/* /inviter — frame creator (beta prototype entry point) */}
         <Route path="/inviter" element={<InviterPage />} />
         <Route path="/invite/:inviteId" element={<InviteePage />} />
+        <Route path="/invite" element={<InviteePage />} />
         <Route path="/invitee" element={<InviteePage />} />
         {/* Legacy root → redirect to /inviter for local dev convenience */}
         <Route path="/" element={<InviterPage />} />

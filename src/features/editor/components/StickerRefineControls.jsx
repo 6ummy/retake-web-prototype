@@ -6,6 +6,11 @@ export default function StickerRefineControls({
   opacity,
   opacitySliderRef,
   opacityValueRef,
+  idPrefix = 'Ns',
+  opacityInputId = 'nsOpacitySlider',
+  opacityValueId = 'nsOpacityVal',
+  applyLabel = 'Add Sticker',
+  applyClassName = 'ns-pri',
   onRefMode,
   onOpacityInput,
   onApply,
@@ -16,7 +21,7 @@ export default function StickerRefineControls({
         <button
           type="button"
           className={`magic-toggle-btn${refMode === 'pen' ? ' on' : ''}`}
-          id="btnNsMark"
+          id={`btn${idPrefix}Mark`}
           onClick={() => onRefMode('pen')}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="var(--icon-stroke-width)" strokeLinecap="round">
@@ -28,7 +33,7 @@ export default function StickerRefineControls({
         <button
           type="button"
           className={`magic-toggle-btn${refMode === 'erase' ? ' on' : ''}`}
-          id="btnNsClear"
+          id={`btn${idPrefix}Clear`}
           onClick={() => onRefMode('erase')}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="var(--icon-stroke-width)" strokeLinecap="round">
@@ -39,9 +44,9 @@ export default function StickerRefineControls({
       </div>
       <OpacitySlider
         className="magic-opacity-row"
-        inputId="nsOpacitySlider"
+        inputId={opacityInputId}
         inputRef={opacitySliderRef}
-        valueId="nsOpacityVal"
+        valueId={opacityValueId}
         valueRef={opacityValueRef}
         valueLabel={`${opacity}%`}
         min="10"
@@ -51,8 +56,8 @@ export default function StickerRefineControls({
         onInput={onOpacityInput}
         onChange={onOpacityInput}
       />
-      <button type="button" className="ns-pri" id="btnNsApply" onClick={onApply}>
-        Add Sticker
+      <button type="button" className={applyClassName} id={`btn${idPrefix}Apply`} onClick={onApply}>
+        {applyLabel}
       </button>
     </>
   );

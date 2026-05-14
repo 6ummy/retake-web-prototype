@@ -40,6 +40,7 @@ export default function useRetakeCamera({
   const tapCaptureTimerRef = useRef(null);
   const flashTimerRef = useRef(null);
   const lastTapAtRef = useRef(0);
+  const lastPreviewTapAtRef = useRef(0);
   const countdownTimersRef = useRef([]);
   const countdownModeRef = useRef(null);
   const pointerIdRef = useRef(null);
@@ -210,6 +211,18 @@ export default function useRetakeCamera({
     }
   }, [cameraTransform.transformRef, getCanvasSize, label, onToast, releaseScreenFlash, revokeVideoUrl, stopCamera, warmScreenFlash]);
 
+  const usePhotoFile = useCallback((file) => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setPhotoUrl(url);
+    revokeVideoUrl();
+    setVideoUrl('');
+    videoBlobRef.current = null;
+    setMode(RETAKE_CAMERA_MODE.PHOTO);
+    stopCamera();
+    onToast?.('Add stickers, text, or draw');
+  }, [onToast, revokeVideoUrl, stopCamera]);
+
   const stopRecording = useCallback(() => {
     clearTimeout(recordStopTimerRef.current);
     if (recordingStartingRef.current && !recorderRef.current) {
@@ -325,10 +338,14 @@ export default function useRetakeCamera({
     countdownTimersRef.current = [setTimeout(tick, 1000)];
   }, [cancelCountdown, timerSeconds]);
 
-  const resetCameraTransform = useCallback(async () => {
-    await applyHardwareZoom(cameraCapabilities.zoomMin);
-    cameraTransform.reset(facingMode === 'user');
-  }, [applyHardwareZoom, cameraCapabilities.zoomMin, cameraTransform, facingMode]);
+  const flipCamera = useCallback(async () => {
+    const next = facingMode === 'environment' ? 'user' : 'environment';
+    setFacingMode(next);
+    cameraTransform.setMirror(next === 'user');
+    setFlashEnabled(false);
+    setScreenFlashActive(false);
+    await startCamera(next);
+  }, [cameraTransform, facingMode, startCamera]);
 
   const handlePointerDown = useCallback((e) => {
     if (mode !== RETAKE_CAMERA_MODE.LIVE) return;
@@ -399,8 +416,7 @@ export default function useRetakeCamera({
       clearTimeout(tapCaptureTimerRef.current);
       tapCaptureTimerRef.current = null;
       lastTapAtRef.current = 0;
-      await resetCameraTransform();
-      onToast?.('Camera view reset');
+      await flipCamera();
       return;
     }
     lastTapAtRef.current = now;
@@ -409,7 +425,7 @@ export default function useRetakeCamera({
       lastTapAtRef.current = 0;
       startTimedAction('photo', capturePhoto);
     }, RETAKE_CAMERA_DOUBLE_TAP_MS);
-  }, [cameraTransform, cancelCountdown, capturePhoto, mode, onToast, resetCameraTransform, startTimedAction, stopRecording]);
+  }, [cameraTransform, cancelCountdown, capturePhoto, flipCamera, mode, startTimedAction, stopRecording]);
 
   const handlePointerCancel = useCallback((e) => {
     if (mode !== RETAKE_CAMERA_MODE.LIVE) return;
@@ -424,11 +440,71 @@ export default function useRetakeCamera({
     if (recordingRef.current || recordingStartingRef.current) stopRecording();
   }, [cameraTransform, cancelCountdown, mode, stopRecording]);
 
+  const handlePreviewPointerDown = useCallback((e) => {
+    if (mode !== RETAKE_CAMERA_MODE.LIVE) return;
+    e.preventDefault();
+    cameraTransform.handlePointerDown(e);
+    pointerMovedRef.current = e.isPrimary === false;
+    pointerDownRef.current = true;
+    pointerIdRef.current = e.pointerId;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+  }, [cameraTransform, mode]);
+
+  const handlePreviewPointerMove = useCallback((e) => {
+    if (mode !== RETAKE_CAMERA_MODE.LIVE || recordingRef.current || recordingStartingRef.current) return;
+    const moved = cameraTransform.handlePointerMove(e);
+    if (moved) pointerMovedRef.current = true;
+  }, [cameraTransform, mode]);
+
+  const handlePreviewPointerUp = useCallback(async (e) => {
+    if (mode !== RETAKE_CAMERA_MODE.LIVE) return;
+    e.preventDefault();
+    const movedCamera = cameraTransform.handlePointerUp(e) || pointerMovedRef.current;
+    if (pointerIdRef.current !== null && e.pointerId !== pointerIdRef.current) {
+      pointerMovedRef.current = movedCamera;
+      return;
+    }
+    if (e.currentTarget.releasePointerCapture && e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    pointerDownRef.current = false;
+    pointerIdRef.current = null;
+    pointerMovedRef.current = false;
+    clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+    if (movedCamera || recordingRef.current || recordingStartingRef.current || countdownModeRef.current) {
+      lastPreviewTapAtRef.current = 0;
+      return;
+    }
+
+    const now = Date.now();
+    if (now - lastPreviewTapAtRef.current < RETAKE_CAMERA_DOUBLE_TAP_MS) {
+      lastPreviewTapAtRef.current = 0;
+      await flipCamera();
+      return;
+    }
+    lastPreviewTapAtRef.current = now;
+  }, [cameraTransform, flipCamera, mode]);
+
+  const handlePreviewPointerCancel = useCallback((e) => {
+    if (mode !== RETAKE_CAMERA_MODE.LIVE) return;
+    e.preventDefault();
+    cameraTransform.handlePointerUp(e);
+    pointerDownRef.current = false;
+    pointerIdRef.current = null;
+    pointerMovedRef.current = false;
+    clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+  }, [cameraTransform, mode]);
+
   const enterLive = useCallback(async () => {
     cancelCountdown();
     clearTimeout(tapCaptureTimerRef.current);
     tapCaptureTimerRef.current = null;
     lastTapAtRef.current = 0;
+    lastPreviewTapAtRef.current = 0;
     setPhotoUrl('');
     revokeVideoUrl();
     setVideoUrl('');
@@ -438,10 +514,8 @@ export default function useRetakeCamera({
     setZoomMode(1);
     cameraTransform.reset(facingMode === 'user');
     await delay(80);
-    const started = await startCamera();
-    if (started) onToast?.('Tap for photo. Hold for video.');
-    return started;
-  }, [cameraTransform, cancelCountdown, facingMode, onToast, revokeVideoUrl, startCamera]);
+    return startCamera();
+  }, [cameraTransform, cancelCountdown, facingMode, revokeVideoUrl, startCamera]);
 
   const returnToLive = useCallback(async () => {
     stopRecording();
@@ -451,15 +525,6 @@ export default function useRetakeCamera({
     recordingRef.current = false;
     return enterLive();
   }, [enterLive, stopCamera, stopRecording]);
-
-  const flipCamera = useCallback(async () => {
-    const next = facingMode === 'environment' ? 'user' : 'environment';
-    setFacingMode(next);
-    cameraTransform.setMirror(next === 'user');
-    setFlashEnabled(false);
-    setScreenFlashActive(false);
-    await startCamera(next);
-  }, [cameraTransform, facingMode, startCamera]);
 
   const toggleTimer = useCallback(() => {
     const index = RETAKE_CAMERA_TIMER_STEPS.indexOf(timerSeconds);
@@ -539,6 +604,7 @@ export default function useRetakeCamera({
     captureBusy: recording || countdownValue !== null,
     enterLive,
     returnToLive,
+    usePhotoFile,
     startCamera,
     stopCamera,
     stopRecording,
@@ -550,5 +616,9 @@ export default function useRetakeCamera({
     handlePointerMove,
     handlePointerUp,
     handlePointerCancel,
+    handlePreviewPointerDown,
+    handlePreviewPointerMove,
+    handlePreviewPointerUp,
+    handlePreviewPointerCancel,
   };
 }

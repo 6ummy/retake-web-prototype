@@ -1,4 +1,5 @@
 import React from 'react';
+import GlassIconButton from '../../../components/ui/GlassIconButton.jsx';
 import GlassSurface from '../../../components/ui/GlassSurface.jsx';
 import SolidIconButton from '../../../components/ui/SolidIconButton.jsx';
 
@@ -17,14 +18,26 @@ export default function RetakeCameraBottomBar({
   onSecondary,
   primaryIcon = 'share',
   primaryLabel,
+  primaryText,
   onPrimary,
   showSecondary = true,
+  hideTitle = false,
+  glassControls = false,
+  className = '',
 }) {
   if (!visible) return null;
 
+  const ActionButton = glassControls ? GlassIconButton : SolidIconButton;
+  const classes = [
+    'retake-camera-bottom-bar',
+    className,
+    'visible',
+    out ? ' out' : '',
+  ].filter(Boolean).join(' ');
+
   return (
-    <GlassSurface className={`retake-camera-bottom-bar visible${out ? ' out' : ''}`}>
-      <SolidIconButton
+    <GlassSurface className={classes}>
+      <ActionButton
         className={review ? 'retake-camera-retake-btn' : 'retake-camera-circle-btn'}
         icon={leftIcon}
         label={leftLabel}
@@ -32,30 +45,35 @@ export default function RetakeCameraBottomBar({
         onClick={onLeft}
       >
         {review ? <span className="retake-camera-retake-label">Retake</span> : null}
-      </SolidIconButton>
-      <button
-        type="button"
-        className="retake-camera-title-btn"
-        aria-label={titleLabel}
-        onClick={onTitle}
-      >
-        <span className="retake-camera-title-text">{title}</span>
-      </button>
+      </ActionButton>
+      {!hideTitle && (
+        <button
+          type="button"
+          className="retake-camera-title-btn"
+          aria-label={titleLabel}
+          onClick={onTitle}
+        >
+          <span className="retake-camera-title-text">{title}</span>
+        </button>
+      )}
       <div className="retake-camera-bottom-actions">
         {showSecondary && (
-          <SolidIconButton
+          <ActionButton
             className="retake-camera-circle-btn"
             icon={secondaryIcon}
             label={secondaryLabel}
             onClick={onSecondary}
           />
         )}
-        <SolidIconButton
+        <ActionButton
           className="retake-camera-primary-btn"
           icon={primaryIcon}
           label={primaryLabel}
           onClick={onPrimary}
-        />
+          shape={primaryText ? 'pill' : 'circle'}
+        >
+          {primaryText ? <span className="retake-camera-primary-label">{primaryText}</span> : null}
+        </ActionButton>
       </div>
     </GlassSurface>
   );

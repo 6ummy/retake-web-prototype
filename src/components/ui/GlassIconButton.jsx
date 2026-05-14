@@ -16,6 +16,7 @@ export default function GlassIconButton({
   onClick,
   onMouseEnter,
   onMouseLeave,
+  ...props
 }) {
   return (
     <IconButton
@@ -34,6 +35,7 @@ export default function GlassIconButton({
       onClick={onClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      {...props}
     >
       {children}
     </IconButton>

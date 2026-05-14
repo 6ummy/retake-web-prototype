@@ -17,13 +17,15 @@ export function useEditName({ frameName, setFrameName, setScrimVisible }) {
   }, [frameName, setScrimVisible]);
 
   const saveEditName = useCallback(() => {
-    if (editNameInputValue.trim()) setFrameName(editNameInputValue.trim());
+    const nextName = editNameInputValue.trim() || frameName;
+    if (editNameInputValue.trim()) setFrameName(nextName);
     setEditNameVisible(false);
     setScrimVisible(false);
     document.body.style.overflow = '';
     document.documentElement.style.overflow = '';
     window.scrollTo(0, 0);
-  }, [editNameInputValue, setFrameName, setScrimVisible]);
+    return nextName;
+  }, [editNameInputValue, frameName, setFrameName, setScrimVisible]);
 
   return {
     editNameVisible, editNameInputValue, setEditNameInputValue,

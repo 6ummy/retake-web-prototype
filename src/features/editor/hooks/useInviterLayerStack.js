@@ -37,16 +37,16 @@ function makePreviewCanvas(source, order) {
   return canvas;
 }
 
-export function drawCheckerboardMasked(ctx, maskCanvas, opacity = 1) {
+export function drawCheckerboardMasked(ctx, maskCanvas, opacity = 1, options = {}) {
   if (!maskCanvas) return;
   const temp = document.createElement('canvas');
   temp.width = maskCanvas.width;
   temp.height = maskCanvas.height;
   const tCtx = temp.getContext('2d');
-  tCtx.fillStyle = '#e8e8e8';
+  tCtx.fillStyle = options.light || '#e8e8e8';
   tCtx.fillRect(0, 0, temp.width, temp.height);
-  tCtx.fillStyle = '#d0d0d0';
-  const size = 20;
+  tCtx.fillStyle = options.dark || '#d0d0d0';
+  const size = options.size || 20;
   for (let y = 0; y < temp.height; y += size) {
     for (let x = 0; x < temp.width; x += size) {
       if (((x / size) + (y / size)) % 2 === 0) tCtx.fillRect(x, y, size, size);
@@ -190,7 +190,7 @@ export default function useInviterLayerStack({
     const canvas = canvasRef.current;
     const width = options.width || canvas?.width || ctx.canvas.width;
     const height = options.height || canvas?.height || ctx.canvas.height;
-    ctx.clearRect(0, 0, width, height);
+    if (!options.preserveExisting) ctx.clearRect(0, 0, width, height);
     if (canvasFillRef.current) ctx.drawImage(canvasFillRef.current, 0, 0, width, height);
     if (drawGalleryBase) drawGalleryBase(ctx);
 

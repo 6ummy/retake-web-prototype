@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import '../../styles/inviter.css';
 import SolidIconButton from '../../components/ui/SolidIconButton';
 import { useToast } from '../editor/hooks/useToast';
@@ -23,7 +23,7 @@ import Toast from '../../components/ui/Toast';
 import VerticalToolbar from './components/VerticalToolbar';
 import BottomBar from './components/BottomBar';
 import RetakeCameraBottomBar from '../editor/components/RetakeCameraBottomBar.jsx';
-import RetakeCameraControls from '../editor/components/RetakeCameraControls.jsx';
+import CameraGestureToast from '../editor/components/CameraGestureToast.jsx';
 import { RetakeCountdownOverlay, RetakeRecordingStroke, RetakeScreenFlash } from '../editor/components/RetakeCameraOverlays.jsx';
 import RetakeCameraStage from '../editor/components/RetakeCameraStage.jsx';
 import RetakeReviewToolbar from '../editor/components/RetakeReviewToolbar.jsx';
@@ -32,6 +32,7 @@ import PhotoInputs from './components/PhotoInputs';
 import EditNamePopup from './components/EditNamePopup';
 import IntroCard from './components/IntroCard';
 import { INVITER_FLOW_STATES } from './state.js';
+import { buildInviteUrl } from '../../lib/routes.js';
 import {
   drawContainedImageWithBackground,
   drawMediaCoverWithTransform,
@@ -46,9 +47,9 @@ const STEP3_MODE = {
 };
 
 const SAVED_FRAMES_KEY = 'retake.savedFrames.v1';
-const STEP3_LONG_PRESS_MS = 420;
 const STEP3_MAX_RECORD_MS = 10000;
 const STEP3_DOUBLE_TAP_MS = 260;
+const STEP3_GESTURE_HINT_MS = 2600;
 const STEP3_TIMER_STEPS = [0, 3, 10];
 const STEP3_MIN_SOFTWARE_SCALE = 0.05;
 const STEP3_MAX_SOFTWARE_SCALE = 4;
@@ -316,6 +317,7 @@ export default function InviterPage() {
   const step3RecordStartedAtRef = useRef(0);
   const step3LongPressTimerRef = useRef(null);
   const step3TapCaptureTimerRef = useRef(null);
+  const step3GestureHintTimerRef = useRef(null);
   const step3FlashTimerRef = useRef(null);
   const step3LastTapAtRef = useRef(0);
   const step3CountdownTimersRef = useRef([]);
@@ -344,8 +346,8 @@ export default function InviterPage() {
   const [penType, setPenType] = useState('pen');
   const [frameName, setFrameName] = useState('my frame');
   const [editorVisible, setEditorVisible] = useState(false);
-  const [introCardVisible, setIntroCardVisible] = useState(false);
-  const [scrimVisible, setScrimVisible] = useState(false);
+  const [introCardVisible, setIntroCardVisible] = useState(true);
+  const [scrimVisible, setScrimVisible] = useState(true);
   const [frameScrimVisible, setFrameScrimVisible] = useState(false);
   const [exitBtnVisible, setExitBtnVisible] = useState(false);
   const [undoRedoVisible, setUndoRedoVisible] = useState(false);
@@ -365,6 +367,7 @@ export default function InviterPage() {
   const [step3RecordingProgress, setStep3RecordingProgress] = useState(1);
   const [step3CameraReady, setStep3CameraReady] = useState(false);
   const [step3CameraIssue, setStep3CameraIssue] = useState('');
+  const [step3GestureHintVisible, setStep3GestureHintVisible] = useState(false);
   const [step3FacingMode, setStep3FacingMode] = useState('environment');
   const [step3FlashEnabled, setStep3FlashEnabled] = useState(false);
   const [step3ScreenFlashActive, setStep3ScreenFlashActive] = useState(false);
@@ -372,9 +375,13 @@ export default function InviterPage() {
   const [step3ZoomMode, setStep3ZoomMode] = useState(1);
   const [step3CameraCapabilities, setStep3CameraCapabilities] = useState(STEP3_DEFAULT_CAPABILITIES);
   const [step3CountdownValue, setStep3CountdownValue] = useState(null);
+  const [editNameSaveLabel, setEditNameSaveLabel] = useState('Save');
   const [s2GalleryAdjustable, setS2GalleryAdjustable] = useState(false);
   const [savedFrames, setSavedFrames] = useState(() => loadSavedFrames());
   const [savedFramesVisible, setSavedFramesVisible] = useState(false);
+  const [savedFrameTitleEditing, setSavedFrameTitleEditing] = useState(false);
+  const [savedFrameSavedTitle, setSavedFrameSavedTitle] = useState(null);
+  const pendingShareAfterNameRef = useRef(false);
   const bottomBarOutBeforeStickerDragRef = useRef(false);
 
   // ── Hooks ──
@@ -610,9 +617,41 @@ export default function InviterPage() {
       1 - (clientY - rect.top - TRACK_TOP_Y) / (TRACK_BOT_Y - TRACK_TOP_Y)));
   }, []);
 
-  const { resetInteractionState } = useCanvasDrawing({
+  const getMagicSelectionSourceCanvas = useCallback(async () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const source = document.createElement('canvas');
+    source.width = canvas.width;
+    source.height = canvas.height;
+    const sourceCtx = source.getContext('2d');
+    await layerStack.renderFrameLayersToContext(sourceCtx, {
+      width: canvas.width,
+      height: canvas.height,
+      preview: true,
+    });
+    sourceCtx.drawImage(canvas, 0, 0);
+    return source;
+  }, [canvasRef, layerStack]);
+
+  const {
+    resetInteractionState,
+    resetMagicSelection,
+    magicSelectPhase,
+    magicSelectConfirmDisabled,
+    magicSelectDetecting,
+    magicSelectRefMode,
+    magicUndoDisabled,
+    magicRedoDisabled,
+    confirmMagicSelection,
+    applyMagicSelection,
+    undoMagicSelection,
+    redoMagicSelection,
+    setMagicSelectionRefMode,
+    refreshMagicSelectionPreview,
+  } = useCanvasDrawing({
     canvasRef,
     ctxRef,
+    selectionCanvasRef,
     activeToolRef,
     toolRadiusRef,
     eraserOpacityRef,
@@ -633,11 +672,12 @@ export default function InviterPage() {
     expandLeftPanel,
     applyTrackNorm,
     normFromClientY,
+    showToast,
+    getMagicSelectionSourceCanvas,
     onCommitStroke: layerStack.addStrokeLayer,
     onCommitCanvasFill: layerStack.setCanvasFillFromCanvas,
     onInitialIntro: () => {
       mainUndoStackRef.current = [snapshot()];
-      setTimeout(() => { setScrimVisible(true); setIntroCardVisible(true); }, 400);
     },
   });
 
@@ -817,6 +857,21 @@ export default function InviterPage() {
   // ── Editor enter/exit ──
   const delay = (ms) => new Promise(r => setTimeout(r, ms));
 
+  const hideStep3GestureHint = useCallback(() => {
+    clearTimeout(step3GestureHintTimerRef.current);
+    step3GestureHintTimerRef.current = null;
+    setStep3GestureHintVisible(false);
+  }, []);
+
+  const showStep3GestureHint = useCallback(() => {
+    clearTimeout(step3GestureHintTimerRef.current);
+    setStep3GestureHintVisible(true);
+    step3GestureHintTimerRef.current = setTimeout(() => {
+      setStep3GestureHintVisible(false);
+      step3GestureHintTimerRef.current = null;
+    }, STEP3_GESTURE_HINT_MS);
+  }, []);
+
   const enterEditor = useCallback(async () => {
     setIntroCardVisible(false);
     setScrimVisible(false);
@@ -877,7 +932,7 @@ export default function InviterPage() {
       mainUndoStackRef, mainRedoStackRef, toolUndoStackRef, toolRedoStackRef, stickerSys, layerStack, snapshot]);
 
   // ── Body layout lock ──
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.style.cssText = 'height:100%;overflow:hidden;';
     document.body.classList.add('inviter-mode');
     const onScreenScroll = () => {
@@ -1323,6 +1378,15 @@ export default function InviterPage() {
     step3CameraTransform.reset(step3FacingMode === 'user');
   }, [applyStep3HardwareZoom, step3CameraCapabilities.zoomMin, step3CameraTransform, step3FacingMode]);
 
+  const handleStep3FlipCamera = useCallback(async () => {
+    const next = step3FacingMode === 'environment' ? 'user' : 'environment';
+    setStep3FacingMode(next);
+    step3CameraTransform.setMirror(next === 'user');
+    setStep3FlashEnabled(false);
+    setStep3ScreenFlashActive(false);
+    await startStep3Camera(next);
+  }, [startStep3Camera, step3CameraTransform, step3FacingMode]);
+
   const warmStep3ScreenFlash = useCallback(async () => {
     if (!step3UsesScreenFlash) return;
     clearTimeout(step3FlashTimerRef.current);
@@ -1377,10 +1441,6 @@ export default function InviterPage() {
       step3LongPressTimerRef.current = null;
       return;
     }
-    if (Date.now() - step3LastTapAtRef.current < STEP3_DOUBLE_TAP_MS) {
-      clearTimeout(step3TapCaptureTimerRef.current);
-      step3TapCaptureTimerRef.current = null;
-    }
     step3CameraTransform.handlePointerDown(e);
     step3PointerMovedRef.current = false;
     step3PointerDownRef.current = true;
@@ -1393,12 +1453,8 @@ export default function InviterPage() {
       }
     }
     clearTimeout(step3LongPressTimerRef.current);
-    step3LongPressTimerRef.current = setTimeout(() => {
-      step3LongPressTimerRef.current = null;
-      if (!step3PointerDownRef.current) return;
-      startStep3TimedAction('video', startStep3Recording);
-    }, STEP3_LONG_PRESS_MS);
-  }, [startStep3Recording, startStep3TimedAction, step3CameraTransform, step3Mode]);
+    step3LongPressTimerRef.current = null;
+  }, [step3CameraTransform, step3Mode]);
 
   const handleStep3PointerMove = useCallback((e) => {
     if (step3Mode !== STEP3_MODE.LIVE || step3RecordingRef.current || step3RecordingStartingRef.current) return;
@@ -1424,7 +1480,6 @@ export default function InviterPage() {
         // Ignore release races; the recording stop path below is what matters.
       }
     }
-    const shouldCapturePhoto = !!step3LongPressTimerRef.current;
     step3PointerDownRef.current = false;
     step3PointerIdRef.current = null;
     step3PointerMovedRef.current = false;
@@ -1439,24 +1494,25 @@ export default function InviterPage() {
       cancelStep3Countdown();
       return;
     }
-    if (!shouldCapturePhoto || movedCamera) return;
+    clearTimeout(step3TapCaptureTimerRef.current);
+    step3TapCaptureTimerRef.current = null;
+    if (movedCamera) {
+      step3LastTapAtRef.current = 0;
+      return;
+    }
 
     const now = Date.now();
     if (now - step3LastTapAtRef.current < STEP3_DOUBLE_TAP_MS) {
-      clearTimeout(step3TapCaptureTimerRef.current);
-      step3TapCaptureTimerRef.current = null;
       step3LastTapAtRef.current = 0;
-      await resetStep3CameraTransform();
-      showToast('Camera view reset');
+      await handleStep3FlipCamera();
       return;
     }
     step3LastTapAtRef.current = now;
-    clearTimeout(step3TapCaptureTimerRef.current);
     step3TapCaptureTimerRef.current = setTimeout(() => {
       step3LastTapAtRef.current = 0;
-      startStep3TimedAction('photo', completeStep3PhotoCapture);
+      step3TapCaptureTimerRef.current = null;
     }, STEP3_DOUBLE_TAP_MS);
-  }, [cancelStep3Countdown, completeStep3PhotoCapture, resetStep3CameraTransform, showToast, startStep3TimedAction, step3CameraTransform, step3Mode, stopStep3Recording]);
+  }, [cancelStep3Countdown, handleStep3FlipCamera, step3CameraTransform, step3Mode, stopStep3Recording]);
 
   const handleStep3PointerCancel = useCallback((e) => {
     if (step3Mode !== STEP3_MODE.LIVE) return;
@@ -1492,7 +1548,6 @@ export default function InviterPage() {
     exitCurrentTool(true);
     await renderStep3ArtworkPlacement();
     stickerSys.closePanel();
-    setSharePanelVisible(false);
     setScrimVisible(false);
     setIntroCardVisible(false);
     setStep3PhotoUrl('');
@@ -1501,6 +1556,7 @@ export default function InviterPage() {
     step3VideoBlobRef.current = null;
     setSavedFramesVisible(false);
     setStep3Mode(STEP3_MODE.LIVE);
+    showStep3GestureHint();
     setStep3FlashEnabled(false);
     setStep3ZoomMode(1);
     step3CameraTransform.reset(step3FacingMode === 'user');
@@ -1517,9 +1573,8 @@ export default function InviterPage() {
     if (canvasRef.current) canvasRef.current.classList.add('no-tool');
     if (stickerSys.stickerOverlayRef.current) stickerSys.stickerOverlayRef.current.style.pointerEvents = 'none';
     await delay(80);
-    const started = await startStep3Camera();
-    if (started) showToast('Tap for photo. Hold for video.');
-  }, [cancelStep3Countdown, exitCurrentTool, renderStep3ArtworkPlacement, revokeStep3VideoUrl, setSharePanelVisible, showToast, startStep3Camera,
+    await startStep3Camera();
+  }, [cancelStep3Countdown, exitCurrentTool, renderStep3ArtworkPlacement, revokeStep3VideoUrl, showStep3GestureHint, startStep3Camera,
       step3CameraTransform, step3FacingMode, stickerSys]);
 
   const exitStep3ToEditor = useCallback(async () => {
@@ -1527,6 +1582,7 @@ export default function InviterPage() {
     clearTimeout(step3TapCaptureTimerRef.current);
     step3TapCaptureTimerRef.current = null;
     step3LastTapAtRef.current = 0;
+    hideStep3GestureHint();
     stopStep3Recording();
     stopStep3Camera();
     setStep3Recording(false);
@@ -1555,7 +1611,7 @@ export default function InviterPage() {
     if (stickerSys.stickerOverlayRef.current) stickerSys.stickerOverlayRef.current.style.pointerEvents = '';
     if (canvasRef.current) canvasRef.current.classList.add('no-tool');
     renderS2GalleryPlacement();
-  }, [cancelStep3Countdown, revokeStep3VideoUrl, setToolsCollapsed, stickerSys, stopStep3Camera, stopStep3Recording,
+  }, [cancelStep3Countdown, hideStep3GestureHint, revokeStep3VideoUrl, setToolsCollapsed, stickerSys, stopStep3Camera, stopStep3Recording,
       toolsCollapsedRef, toolsCollapseTimerRef, renderS2GalleryPlacement]);
 
   const returnStep3ToLive = useCallback(async () => {
@@ -1569,6 +1625,7 @@ export default function InviterPage() {
     setStep3VideoUrl('');
     step3VideoBlobRef.current = null;
     setStep3Mode(STEP3_MODE.LIVE);
+    showStep3GestureHint();
     setStep3FlashEnabled(false);
     setStep3ZoomMode(1);
     setToolsVisible(false);
@@ -1577,9 +1634,8 @@ export default function InviterPage() {
     if (canvasRef.current) canvasRef.current.classList.add('no-tool');
     if (stickerSys.stickerOverlayRef.current) stickerSys.stickerOverlayRef.current.style.pointerEvents = 'none';
     await delay(80);
-    const started = await startStep3Camera();
-    if (started) showToast('Tap for photo. Hold for video.');
-  }, [cancelStep3Countdown, exitCurrentTool, revokeStep3VideoUrl, showToast, startStep3Camera, stickerSys]);
+    await startStep3Camera();
+  }, [cancelStep3Countdown, exitCurrentTool, revokeStep3VideoUrl, showStep3GestureHint, startStep3Camera, stickerSys]);
 
   const handleStep3Back = useCallback(async () => {
     if (savedFramesVisible) {
@@ -1607,6 +1663,8 @@ export default function InviterPage() {
       const next = [item, ...loadSavedFrames().filter(frame => frame.id !== item.id)].slice(0, 24);
       persistSavedFrames(next);
       setSavedFrames(next);
+      setSavedFrameSavedTitle(item.name);
+      setSavedFrameTitleEditing(false);
       showToast('Frame saved');
       return item;
     } catch (err) {
@@ -1637,6 +1695,9 @@ export default function InviterPage() {
       ctx.drawImage(img, 0, 0, width, height);
       stickerSys.clearStickers();
       layerStack.clearLayers();
+      setFrameName(frame.name || 'my frame');
+      setSavedFrameSavedTitle(frame.name || 'my frame');
+      setSavedFrameTitleEditing(false);
       mainUndoStackRef.current = [snapshot()];
       mainRedoStackRef.current = [];
       syncHistoryBtns();
@@ -1649,11 +1710,13 @@ export default function InviterPage() {
   }, [closeSavedFrames, getCanvasSize, layerStack, mainRedoStackRef, mainUndoStackRef, showToast, snapshot, stickerSys, syncHistoryBtns]);
 
   const handleSavedFrameDelete = useCallback((frameId) => {
+    const removed = loadSavedFrames().find(frame => frame.id === frameId);
     const next = loadSavedFrames().filter(frame => frame.id !== frameId);
     persistSavedFrames(next);
     setSavedFrames(next);
+    if (removed?.name === savedFrameSavedTitle) setSavedFrameSavedTitle(null);
     showToast('Frame removed');
-  }, [showToast]);
+  }, [savedFrameSavedTitle, showToast]);
 
   const handleStep3SaveRetake = useCallback(async () => {
     if (step3Mode === STEP3_MODE.VIDEO && step3VideoBlobRef.current) {
@@ -1683,21 +1746,22 @@ export default function InviterPage() {
     openSavedFrames();
   }, [buildStep3PhotoBlob, buildStep3VideoBlob, openSavedFrames, saveFrameLocal, showToast, step3Mode]);
 
-  const handleStep3ShareRetake = useCallback(async () => {
+  const handleStep3ShareRetake = useCallback(async (nameOverride) => {
+    const activeFrameName = nameOverride || frameName;
     if (step3Mode === STEP3_MODE.VIDEO && step3VideoBlobRef.current) {
       try {
         const blob = await buildStep3VideoBlob();
-        await shareBlob(blob, `retake-${Date.now()}.webm`, 'My Retake', frameName);
+        await shareBlob(blob, `retake-${Date.now()}.webm`, 'My Retake', activeFrameName);
       } catch (err) {
         console.warn('[step3] Share video failed:', err);
-        await shareBlob(step3VideoBlobRef.current, `retake-${Date.now()}.webm`, 'My Retake', frameName);
+        await shareBlob(step3VideoBlobRef.current, `retake-${Date.now()}.webm`, 'My Retake', activeFrameName);
       }
       return;
     }
     if (step3Mode === STEP3_MODE.PHOTO) {
       try {
         const blob = await buildStep3PhotoBlob();
-        await shareBlob(blob, `retake-${Date.now()}.jpg`, 'My Retake', frameName);
+        await shareBlob(blob, `retake-${Date.now()}.jpg`, 'My Retake', activeFrameName);
       } catch (err) {
         console.warn('[step3] Share retake failed:', err);
         showToast('Could not share Retake');
@@ -1706,31 +1770,46 @@ export default function InviterPage() {
     }
     try {
       const frameDataUrl = await buildFrameDataUrl();
-      const upload = await uploadFrame({ frameDataUrl, frameName });
+      const upload = await uploadFrame({ frameDataUrl, frameName: activeFrameName });
       const invite = await createInvite({
         frameUrl: upload.url,
-        frameName,
+        frameName: activeFrameName,
         username: 'yunchai',
       });
+      const inviteUrl = invite.id ? buildInviteUrl(invite.id) : invite.inviteUrl;
       if (navigator.share) {
         try {
           await navigator.share({
             title: 'Retake invite',
-            text: `${frameName} is ready for your Retake`,
-            url: invite.inviteUrl,
+            text: `${activeFrameName} is ready for your Retake`,
+            url: inviteUrl,
           });
           return;
         } catch (err) {
           if (err?.name === 'AbortError') return;
         }
       }
-      await navigator.clipboard?.writeText(invite.inviteUrl);
+      await navigator.clipboard?.writeText(inviteUrl);
       showToast('Invite link copied');
     } catch (err) {
       console.warn('[step3] Invite creation failed:', err);
       showToast(err?.message || 'Could not create invite');
     }
   }, [buildFrameDataUrl, buildStep3PhotoBlob, buildStep3VideoBlob, frameName, shareBlob, showToast, step3Mode]);
+
+  const handleStep3ShareTap = useCallback(() => {
+    pendingShareAfterNameRef.current = true;
+    setEditNameSaveLabel('Share');
+    openEditName();
+  }, [openEditName]);
+
+  const handleEditNameSave = useCallback(() => {
+    const nextName = saveEditName();
+    setEditNameSaveLabel('Save');
+    if (!pendingShareAfterNameRef.current) return;
+    pendingShareAfterNameRef.current = false;
+    handleStep3ShareRetake(nextName);
+  }, [handleStep3ShareRetake, saveEditName]);
 
   const handleStep3FlashToggle = useCallback(async () => {
     if (!step3CameraReady) return;
@@ -1755,15 +1834,6 @@ export default function InviterPage() {
     setStep3TimerSeconds(next);
     showToast(next ? `${next}s timer` : 'Timer off');
   }, [showToast, step3TimerSeconds]);
-
-  const handleStep3FlipCamera = useCallback(async () => {
-    const next = step3FacingMode === 'environment' ? 'user' : 'environment';
-    setStep3FacingMode(next);
-    step3CameraTransform.setMirror(next === 'user');
-    setStep3FlashEnabled(false);
-    setStep3ScreenFlashActive(false);
-    await startStep3Camera(next);
-  }, [startStep3Camera, step3CameraTransform, step3FacingMode]);
 
   const handleStep3Zoom = useCallback(async (zoom) => {
     await applyStep3HardwareZoom(zoom);
@@ -1926,6 +1996,7 @@ export default function InviterPage() {
       revokeStep3VideoUrl();
       clearTimeout(step3LongPressTimerRef.current);
       clearTimeout(step3TapCaptureTimerRef.current);
+      clearTimeout(step3GestureHintTimerRef.current);
       clearTimeout(step3FlashTimerRef.current);
       clearTimeout(step3RecordStopTimerRef.current);
       step3CountdownTimersRef.current.forEach(timer => clearTimeout(timer));
@@ -2059,15 +2130,18 @@ export default function InviterPage() {
       await exitToIntro();
       return;
     }
-    if (mainUndoStackRef.current.length > 1) {
-      const ok = await showConfirm('Discard this frame?', 'Discard', true);
-      if (!ok) return;
-    }
+    const ok = await showConfirm('Discard this frame?', 'Discard', true);
+    if (!ok) return;
     await exitToIntro();
-  }, [cancelStep3Countdown, exitToIntro, mainUndoStackRef, revokeStep3VideoUrl, showConfirm, step3Mode, stopStep3Camera, stopStep3Recording]);
+  }, [cancelStep3Countdown, exitToIntro, revokeStep3VideoUrl, showConfirm, step3Mode, stopStep3Camera, stopStep3Recording]);
 
   const handleScrimClick = useCallback(() => {
-    if (editNameVisible) { saveEditName(); return; }
+    if (editNameVisible) {
+      pendingShareAfterNameRef.current = false;
+      setEditNameSaveLabel('Save');
+      saveEditName();
+      return;
+    }
     if (savedFramesVisible) { closeSavedFrames(); return; }
     if (stickerSys.stickerPanelVisible) stickerSys.closePanel();
   }, [closeSavedFrames, editNameVisible, saveEditName, savedFramesVisible, stickerSys]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2106,19 +2180,27 @@ export default function InviterPage() {
   }, []);
 
   const handleMagicPenModeClick = useCallback((mode) => {
+    resetMagicSelection();
     magicPenModeRef.current = mode;
     setMagicPenMode(mode);
-    if (canvasRef.current) canvasRef.current.style.cursor = mode === 'freehand' ? 'crosshair' : 'default';
+    if (canvasRef.current) canvasRef.current.style.cursor = mode === 'freehand' || mode === 'magic' ? 'crosshair' : 'default';
     if (mode !== 'freehand' && brushCursorRef.current) brushCursorRef.current.style.display = 'none';
     syncCursor();
-  }, [syncCursor]);
+  }, [resetMagicSelection, syncCursor]);
 
   const handleMagicPenOpacityInput = useCallback((e) => {
     const value = Math.max(5, Math.min(100, Number(e.target.value) || 100));
     magicPenOpacityRef.current = value;
     setMagicPenOpacity(value);
     e.target.style.setProperty('--fill', `${value}%`);
-  }, []);
+    refreshMagicSelectionPreview();
+  }, [refreshMagicSelectionPreview]);
+
+  const handleMagicSelectApply = useCallback(() => {
+    if (applyMagicSelection()) exitToolMode();
+  }, [applyMagicSelection, exitToolMode]);
+
+  const isMagicRefining = magicPenMode === 'magic' && magicSelectPhase === 'refine';
 
   const isStep3 = step3Mode !== null;
   const isStep3Live = step3Mode === STEP3_MODE.LIVE;
@@ -2128,6 +2210,9 @@ export default function InviterPage() {
   const isStep3Countdown = step3CountdownValue !== null;
   const isStep3CaptureBusy = step3Recording || isStep3Countdown;
   const stickerMakerVisible = stickerSys.newStickerVisible;
+  const normalizedFrameName = frameName.trim() || 'my frame';
+  const isSavedFrameTitleSaved = !!savedFrameSavedTitle && savedFrameSavedTitle === normalizedFrameName;
+
   const flowState = savedFramesVisible
     ? INVITER_FLOW_STATES.STEP3_SAVED_FRAMES
     : isStep3Live
@@ -2193,15 +2278,9 @@ export default function InviterPage() {
         />
       )}
 
-      <RetakeCameraControls
-        visible={isStep3Live && !isStep3CaptureBusy && !stickerMakerVisible}
-        flashAvailable={step3CameraReady}
-        flashEnabled={step3FlashEnabled}
-        timerSeconds={step3TimerSeconds}
-        onFlash={handleStep3FlashToggle}
-        onTimer={handleStep3TimerToggle}
-        onFlip={handleStep3FlipCamera}
-      />
+      {isStep3Live && !isStep3CaptureBusy && !stickerMakerVisible && (
+        <div className="step3-preview-label" aria-live="polite">Preview</div>
+      )}
 
       <RetakeZoomControl
         visible={isStep3Live && !isStep3CaptureBusy && !stickerMakerVisible}
@@ -2209,6 +2288,8 @@ export default function InviterPage() {
         zoomMode={step3ZoomMode}
         onZoom={handleStep3Zoom}
       />
+
+      <CameraGestureToast visible={isStep3Live && step3GestureHintVisible && !isStep3CaptureBusy && !stickerMakerVisible} />
 
       {!isStep3CaptureBusy && !stickerMakerVisible && (
         <ExitButton
@@ -2251,9 +2332,7 @@ export default function InviterPage() {
           <BottomBar
             visible={bottomBarVisible}
             out={bottomBarOut}
-            frameName={frameName}
             onGalleryClick={handleBgGallery}
-            onEditName={openEditName}
             onProceed={handleProceedToStep3}
           />
         </>
@@ -2283,16 +2362,18 @@ export default function InviterPage() {
         <RetakeCameraBottomBar
           visible
           out={bottomBarOut}
-          review={isStep3Review}
+          className="retake-camera-bottom-bar--split-actions inviter-s3-bottom-bar"
+          glassControls
+          hideTitle
+          review={false}
           title={frameName}
           titleLabel="Name your frame"
-          leftLabel={isStep3Review ? 'Retake photo or video' : 'Back'}
+          leftLabel="Back"
           onLeft={handleStep3Back}
-          onTitle={openEditName}
-          secondaryLabel="Saved frames"
-          onSecondary={openSavedFrames}
-          primaryLabel={isStep3Review ? 'Share Retake' : 'Share frame'}
-          onPrimary={handleStep3ShareRetake}
+          showSecondary={false}
+          primaryLabel="Share"
+          primaryText="Share"
+          onPrimary={openSavedFrames}
         />
       )}
 
@@ -2309,11 +2390,15 @@ export default function InviterPage() {
         penType={penType}
         magicPenMode={magicPenMode}
         magicPenOpacity={magicPenOpacity}
-        tmUndoBtnDisabled={tmUndoBtnDisabled}
-        tmRedoBtnDisabled={tmRedoBtnDisabled}
+        magicSelectPhase={magicSelectPhase}
+        magicSelectConfirmDisabled={magicSelectConfirmDisabled}
+        magicSelectDetecting={magicSelectDetecting}
+        magicSelectRefMode={magicSelectRefMode}
+        tmUndoBtnDisabled={isMagicRefining ? magicUndoDisabled : tmUndoBtnDisabled}
+        tmRedoBtnDisabled={isMagicRefining ? magicRedoDisabled : tmRedoBtnDisabled}
         onDone={handleDone}
-        onUndo={toolUndo}
-        onRedo={toolRedo}
+        onUndo={isMagicRefining ? undoMagicSelection : toolUndo}
+        onRedo={isMagicRefining ? redoMagicSelection : toolRedo}
         onSwatchClick={handleSwatchClick}
         onDoodleModeClick={handleDoodleModeClick}
         onColorPickerChange={handleColorPickerChange}
@@ -2321,6 +2406,10 @@ export default function InviterPage() {
         onPenTypeClick={handlePenTypeClick}
         onMagicPenModeClick={handleMagicPenModeClick}
         onMagicPenOpacityInput={handleMagicPenOpacityInput}
+        onMagicSelectBack={() => handleMagicPenModeClick('freehand')}
+        onMagicSelectConfirm={confirmMagicSelection}
+        onMagicSelectRefMode={setMagicSelectionRefMode}
+        onMagicSelectApply={handleMagicSelectApply}
       />
 
       {!isStep3CaptureBusy && (
@@ -2331,20 +2420,84 @@ export default function InviterPage() {
         visible={editNameVisible}
         inputValue={editNameInputValue}
         onChange={e => setEditNameInputValue(e.target.value)}
-        onSave={saveEditName}
+        onSave={handleEditNameSave}
+        saveLabel={editNameSaveLabel}
       />
 
       <div className={`saved-frames-sheet${savedFramesVisible ? ' visible' : ''}`} id="savedFramesSheet">
-        <div className="saved-frames-handle"></div>
-        <div className="saved-frames-header">
-          <div>
-            <p className="saved-frames-title">Saved frames</p>
-            <p className="saved-frames-subtitle">Keep your best frames close.</p>
-          </div>
+        <div className="saved-frames-topbar">
+          <div className="saved-frames-handle"></div>
           <SolidIconButton className="saved-frames-close" icon="close" label="Close saved frames" onClick={closeSavedFrames} />
         </div>
-        <div className="saved-frames-actions">
-          <button className="saved-frame-action" onClick={() => saveFrameLocal('made')}>Save this frame</button>
+        <div className="saved-frame-current">
+          <div className="saved-frame-title-row">
+            <div className="saved-frame-title-main">
+              <p className="saved-frame-title-label">Frame title</p>
+              {savedFrameTitleEditing ? (
+                <input
+                  className="saved-frame-title-input"
+                  id="savedFrameTitle"
+                  type="text"
+                  value={frameName}
+                  maxLength="32"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck="false"
+                  autoFocus
+                  onChange={e => setFrameName(e.target.value)}
+                  onFocus={e => e.currentTarget.select()}
+                  onKeyDown={e => { if (e.key === 'Enter') setSavedFrameTitleEditing(false); }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="saved-frame-title-display"
+                  onClick={() => setSavedFrameTitleEditing(true)}
+                >
+                  {normalizedFrameName}
+                </button>
+              )}
+            </div>
+            <div className="saved-frame-title-actions" aria-label="Frame title actions">
+              {savedFrameTitleEditing ? (
+                <button
+                  type="button"
+                  className="saved-frame-done-action"
+                  onClick={() => setSavedFrameTitleEditing(false)}
+                >
+                  Done
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="saved-frame-edit-action"
+                    onClick={() => setSavedFrameTitleEditing(true)}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    className={`saved-frame-action${isSavedFrameTitleSaved ? ' saved' : ''}`}
+                    disabled={isSavedFrameTitleSaved}
+                    onClick={() => saveFrameLocal('made')}
+                  >
+                    {isSavedFrameTitleSaved ? 'Saved' : 'Save'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="saved-frame-share-action"
+          onClick={() => handleStep3ShareRetake(normalizedFrameName)}
+        >
+          Share
+        </button>
+        <div className="saved-frames-library-header">
+          <p className="saved-frames-title">Saved frames</p>
         </div>
         <div className="saved-frames-grid">
           {savedFrames.length === 0 ? (

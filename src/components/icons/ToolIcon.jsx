@@ -43,6 +43,14 @@ export default function ToolIcon({ type }) {
         </svg>
       );
       break;
+    case 'camera':
+      icon = (
+        <svg {...iconProps}>
+          <path d="M7.35 7.15 8.9 4.9h6.2l1.55 2.25h2.1c1.1 0 2 .9 2 2v8.25c0 1.1-.9 2-2 2H5.25c-1.1 0-2-.9-2-2V9.15c0-1.1.9-2 2-2h2.1Z" />
+          <circle cx="12" cy="13.2" r="3.35" />
+        </svg>
+      );
+      break;
     case 'draw':
       icon = (
         <svg {...iconProps}>
