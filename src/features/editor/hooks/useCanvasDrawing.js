@@ -332,13 +332,13 @@ export function useCanvasDrawing({
     const selCtx = sel.getContext('2d');
     const maskCanvas = drawMaskToCanvas(mask, sel.width, sel.height);
     selCtx.clearRect(0, 0, sel.width, sel.height);
-    drawCheckerboardMasked(selCtx, maskCanvas, 1, {
+    drawCheckerboardMasked(selCtx, maskCanvas, getMagicPenOpacity(magicPenOpacityRef), {
       light: 'rgba(255,255,255,0.95)',
       dark: 'rgba(120,128,148,0.78)',
       size: 18,
     });
     sel.classList.add('sel-active');
-    sel.style.opacity = String(getMagicPenOpacity(magicPenOpacityRef));
+    sel.style.opacity = '1';
   }, [magicPenOpacityRef, selectionCanvasRef]);
 
   const resetMagicSelection = useCallback(() => {
@@ -441,15 +441,12 @@ export function useCanvasDrawing({
 
   const applyMagicSelection = useCallback(() => {
     const canvas = canvasRef.current;
-    const ctx = ctxRef.current;
     const mask = magicMaskRef.current;
-    if (!canvas || !ctx || !mask) return false;
+    if (!canvas || !mask) return false;
     const maskCanvas = drawMaskToCanvas(mask, canvas.width, canvas.height);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawCheckerboardMasked(ctx, maskCanvas, getMagicPenOpacity(magicPenOpacityRef));
     const committed = onCommitStroke?.({
       type: 'magicPenStroke',
-      sourceCanvas: canvas,
+      sourceCanvas: maskCanvas,
       maskCanvas,
       opacity: getMagicPenOpacity(magicPenOpacityRef),
     });
@@ -457,7 +454,7 @@ export function useCanvasDrawing({
     resetMagicSelection();
     if (committed) pushHistory();
     return !!committed;
-  }, [canvasRef, clearActiveCanvas, ctxRef, magicPenOpacityRef, onCommitStroke, pushHistory, resetMagicSelection]);
+  }, [canvasRef, clearActiveCanvas, magicPenOpacityRef, onCommitStroke, pushHistory, resetMagicSelection]);
 
   const setMagicSelectionRefMode = useCallback((mode) => {
     magicRefModeRef.current = mode;
@@ -733,13 +730,15 @@ export function useCanvasDrawing({
   }, [animateMagicLasso, clearMagicSelectionOverlay, getMagicEventPoint, paintMagicSelectionMask, setMagicSelectionPhase, stickerSys]);
 
   const moveMagicSelectionPointer = useCallback((e) => {
-    e.preventDefault();
     if (magicRefineDownRef.current && magicMaskRef.current) {
+      e.preventDefault();
       paintMagicSelectionMask(getMagicEventPoint(e));
-      return;
+      return true;
     }
-    if (!magicLassoDownRef.current) return;
+    if (!magicLassoDownRef.current) return false;
+    e.preventDefault();
     magicLassoPtsRef.current.push(getMagicEventPoint(e));
+    return true;
   }, [getMagicEventPoint, paintMagicSelectionMask]);
 
   const endMagicSelectionPointer = useCallback((e) => {
@@ -992,7 +991,9 @@ export function useCanvasDrawing({
         return;
       }
       if (activeToolRef.current === 'magicPen' && (magicPenModeRef?.current || 'freehand') === 'magic') {
-        if (e.touches[0]) moveMagicSelectionPointer(e);
+        if (e.touches[0] && (magicLassoDownRef.current || magicRefineDownRef.current)) {
+          moveMagicSelectionPointer(e);
+        }
       } else if (shapeDraggingRef.current && e.touches[0]) {
         const p = getXYFromClient(e.touches[0].clientX, e.touches[0].clientY);
         drawMagicPenShapePreview(shapeStartXRef.current, shapeStartYRef.current, p.x, p.y);

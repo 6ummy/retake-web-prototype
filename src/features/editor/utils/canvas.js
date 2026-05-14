@@ -129,7 +129,48 @@ export function getAverageImageColor(image, fallback = '#F7F5F2') {
   }
 }
 
-/** Draw the full source centered inside the canvas, with average-color letterboxing. */
+function getFitScale(fit, sourceWidth, sourceHeight, width, height) {
+  if (fit === 'width') return width / sourceWidth;
+  if (fit === 'height') return height / sourceHeight;
+  if (fit === 'cover') return Math.max(width / sourceWidth, height / sourceHeight);
+  if (fit === 'portrait-height') {
+    return sourceHeight > sourceWidth
+      ? height / sourceHeight
+      : width / sourceWidth;
+  }
+  return Math.min(width / sourceWidth, height / sourceHeight);
+}
+
+function clampPortraitHeightTransform({
+  fit,
+  sourceWidth,
+  sourceHeight,
+  height,
+  drawWidth,
+  drawHeight,
+  transformScale,
+  offsetY,
+  rotation,
+}) {
+  const isPortraitHeightFit = fit === 'portrait-height' && sourceHeight > sourceWidth;
+  if (!isPortraitHeightFit) return { scale: transformScale, offsetY };
+
+  const normalizedRotation = Math.abs(((rotation % 360) + 360) % 360);
+  const rotationRadians = normalizedRotation * Math.PI / 180;
+  const rotatedHeight = (
+    Math.abs(drawWidth * Math.sin(rotationRadians))
+    + Math.abs(drawHeight * Math.cos(rotationRadians))
+  ) || drawHeight;
+  const effectiveScale = Math.max(transformScale, height / rotatedHeight);
+
+  const verticalOverflow = Math.max(0, (rotatedHeight * effectiveScale - height) / 2);
+  return {
+    scale: effectiveScale,
+    offsetY: Math.max(-verticalOverflow, Math.min(verticalOverflow, offsetY)),
+  };
+}
+
+/** Draw the source centered inside the canvas, with average-color letterboxing when the selected fit allows it. */
 export function drawContainedImageWithBackground(ctx, image, width, height, options = '#F7F5F2') {
   const {
     fallback = '#F7F5F2',
@@ -145,21 +186,30 @@ export function drawContainedImageWithBackground(ctx, image, width, height, opti
     mirror = false,
   } = transform;
   const { width: sourceWidth, height: sourceHeight } = getSourceSize(image, width, height);
-  const scale = fit === 'width'
-    ? width / sourceWidth
-    : Math.min(width / sourceWidth, height / sourceHeight);
+  const scale = getFitScale(fit, sourceWidth, sourceHeight, width, height);
   const drawWidth = sourceWidth * scale;
   const drawHeight = sourceHeight * scale;
   const dx = (width - drawWidth) / 2;
   const dy = (height - drawHeight) / 2;
+  const safeTransform = clampPortraitHeightTransform({
+    fit,
+    sourceWidth,
+    sourceHeight,
+    height,
+    drawWidth,
+    drawHeight,
+    transformScale,
+    offsetY,
+    rotation,
+  });
 
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = backgroundColor || getAverageImageColor(image, fallback);
   ctx.fillRect(0, 0, width, height);
   ctx.save();
-  ctx.translate(width / 2 + offsetX, height / 2 + offsetY);
+  ctx.translate(width / 2 + offsetX, height / 2 + safeTransform.offsetY);
   ctx.rotate(rotation * Math.PI / 180);
-  ctx.scale((mirror ? -1 : 1) * transformScale, transformScale);
+  ctx.scale((mirror ? -1 : 1) * safeTransform.scale, safeTransform.scale);
   ctx.drawImage(
     image,
     0,

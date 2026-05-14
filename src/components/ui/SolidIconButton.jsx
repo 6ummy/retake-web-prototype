@@ -15,6 +15,7 @@ export default function SolidIconButton({
   onClick,
   onMouseEnter,
   onMouseLeave,
+  ...props
 }) {
   return (
     <IconButton
@@ -32,6 +33,7 @@ export default function SolidIconButton({
       onClick={onClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      {...props}
     >
       {children}
     </IconButton>

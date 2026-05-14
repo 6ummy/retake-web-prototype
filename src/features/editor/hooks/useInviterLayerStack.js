@@ -201,10 +201,14 @@ export default function useInviterLayerStack({
       } else if (layer.type === 'magicPenStroke') {
         const opacity = normalizeOpacity(layer.opacity);
         ctx.save();
-        ctx.globalCompositeOperation = options.preview ? 'source-over' : 'destination-out';
-        ctx.globalAlpha = opacity;
-        if (options.preview) drawCheckerboardMasked(ctx, layer.mask || layer.source, opacity);
-        else if (layer.mask) ctx.drawImage(layer.mask, 0, 0, width, height);
+        if (options.preview) {
+          ctx.globalCompositeOperation = 'source-over';
+          drawCheckerboardMasked(ctx, layer.mask || layer.source, opacity);
+        } else if (layer.mask) {
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.globalAlpha = opacity;
+          ctx.drawImage(layer.mask, 0, 0, width, height);
+        }
         ctx.restore();
       } else if (options.includeItems === false && layer.item) {
         continue;

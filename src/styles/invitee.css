@@ -203,6 +203,238 @@ body.invitee-mode .retake-camera-bottom-bar.invitee-s3-bottom-bar {
   bottom: calc(var(--invitee-frame-bottom-offset) + var(--canvas-chrome-inset));
 }
 
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.has-primary-avatar {
+  width: calc(var(--control-icon-size) + var(--space-3) + var(--space-13) + var(--space-5));
+  min-width: calc(var(--control-icon-size) + var(--space-3) + var(--space-13) + var(--space-5));
+  height: calc(var(--control-icon-size) + (var(--space-2) * 2));
+  min-height: calc(var(--control-icon-size) + (var(--space-2) * 2));
+  padding: var(--space-2) var(--space-6) var(--space-2) var(--space-2);
+  gap: var(--space-3);
+  background: var(--color-brand-yellow);
+  color: var(--color-ink);
+  border-color: var(--glass-control-border);
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.34);
+  overflow: visible;
+  transition:
+    width var(--motion-panel),
+    min-width var(--motion-panel),
+    padding var(--motion-panel),
+    gap var(--motion-panel),
+    border-radius var(--motion-panel),
+    background var(--motion-medium),
+    box-shadow var(--motion-medium),
+    opacity var(--motion-medium),
+    transform 0.1s ease;
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.is-primary-busy {
+  position: relative;
+  isolation: isolate;
+  width: calc(var(--control-icon-size) + (var(--space-2) * 2));
+  min-width: calc(var(--control-icon-size) + (var(--space-2) * 2));
+  padding: var(--space-2);
+  gap: 0;
+  border-radius: 50%;
+  justify-content: center;
+  overflow: hidden;
+  cursor: wait;
+  opacity: 1;
+  animation: invitee-send-button-breathe 1.6s ease-in-out infinite alternate;
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.is-primary-busy::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: linear-gradient(110deg, transparent 10%, rgba(255, 255, 255, 0.3) 42%, transparent 68%);
+  opacity: 0.36;
+  transform: translateX(-130%) rotate(18deg);
+  animation: invitee-send-button-shimmer 2.15s ease-in-out infinite;
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.is-primary-busy:active {
+  transform: none;
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.is-primary-busy .retake-camera-primary-avatar-set,
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.is-primary-busy .retake-camera-primary-label {
+  position: relative;
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.is-primary-busy .retake-camera-primary-avatar-set {
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  justify-content: center;
+  z-index: 1;
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.is-primary-busy .retake-camera-primary-avatar-set::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-2);
+  z-index: 2;
+  width: 3px;
+  height: var(--space-5);
+  border-radius: var(--radius-pill);
+  background: var(--color-brand-yellow);
+  box-shadow: 0 1px 4px rgba(var(--color-ink-rgb), 0.34);
+  opacity: 0;
+  transform: translate(-50%, var(--space-5));
+  animation: invitee-send-arrow-rise 1.22s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.is-primary-busy .retake-camera-primary-avatar-set::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-4);
+  z-index: 2;
+  width: var(--space-4);
+  height: var(--space-4);
+  border-top: 3px solid var(--color-brand-yellow);
+  border-left: 3px solid var(--color-brand-yellow);
+  border-radius: 2px 0 0 0;
+  filter: drop-shadow(0 1px 3px rgba(var(--color-ink-rgb), 0.34));
+  opacity: 0;
+  transform: translate(-50%, var(--space-5)) rotate(45deg);
+  animation: invitee-send-arrow-head-rise 1.22s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.is-primary-busy .retake-camera-primary-avatar {
+  position: relative;
+  z-index: 1;
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.is-primary-busy .retake-camera-primary-avatar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: rgba(var(--color-ink-rgb), 0.78);
+  opacity: 1;
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.is-primary-busy .retake-camera-primary-avatar img,
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.is-primary-busy .retake-camera-primary-avatar span {
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity var(--motion-medium), transform var(--motion-panel);
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.is-primary-busy .retake-camera-primary-label {
+  width: 0;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  transform: translateX(calc(var(--space-2) * -1));
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-btn.has-primary-avatar:active {
+  background: var(--color-brand-yellow-active);
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-avatar-set {
+  gap: 0;
+  transition: width var(--motion-panel), height var(--motion-panel);
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-avatar {
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-avatar--placeholder {
+  background: var(--color-ink);
+  color: var(--color-brand-yellow);
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-avatar span {
+  font-size: var(--text-sm);
+}
+
+body.invitee-mode .invitee-s3-bottom-bar .retake-camera-primary-label {
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  text-align: left;
+  white-space: nowrap;
+  max-width: var(--space-13);
+  transition:
+    max-width var(--motion-panel),
+    width var(--motion-panel),
+    opacity var(--motion-medium),
+    transform var(--motion-panel);
+}
+
+@keyframes invitee-send-button-breathe {
+  from {
+    background: var(--color-brand-yellow);
+    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.34);
+  }
+
+  to {
+    background: var(--color-brand-yellow);
+    box-shadow: 0 3px 18px rgba(var(--color-ink-rgb), 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.38);
+  }
+}
+
+@keyframes invitee-send-button-shimmer {
+  0%,
+  34% {
+    transform: translateX(-130%) rotate(18deg);
+  }
+
+  78%,
+  100% {
+    transform: translateX(130%) rotate(18deg);
+  }
+}
+
+@keyframes invitee-send-arrow-rise {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, var(--space-5)) scaleY(0.78);
+  }
+
+  22% {
+    opacity: 1;
+  }
+
+  68% {
+    opacity: 1;
+    transform: translate(-50%, calc(var(--space-2) * -1)) scaleY(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, calc(var(--space-6) * -1)) scaleY(0.88);
+  }
+}
+
+@keyframes invitee-send-arrow-head-rise {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, var(--space-5)) rotate(45deg) scale(0.82);
+  }
+
+  22% {
+    opacity: 1;
+  }
+
+  68% {
+    opacity: 1;
+    transform: translate(-50%, calc(var(--space-2) * -1)) rotate(45deg) scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, calc(var(--space-6) * -1)) rotate(45deg) scale(0.9);
+  }
+}
+
 body.invitee-mode .s6-bottom-bar {
   bottom: calc(var(--invitee-frame-bottom-offset) + var(--canvas-chrome-inset));
 }
@@ -243,16 +475,209 @@ body.invitee-mode .s6-toast.visible {
 .invitee-submitted-banner {
   position: absolute;
   left: 50%;
-  top: var(--canvas-chrome-inset);
-  transform: translateX(-50%);
-  z-index: var(--z-toast);
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: 6px 6px 6px 14px;
-  border-radius: var(--radius-pill);
-  background: var(--color-brand-yellow);
-  color: var(--color-ink);
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: var(--z-sheet);
+  box-sizing: border-box;
+  width: min(calc(100vw - (var(--space-8) * 2)), 390px);
+  max-height: calc(100dvh - (var(--space-8) * 2));
+  display: grid;
+  gap: var(--space-7);
+  justify-items: center;
+  padding: var(--space-8) var(--space-7) var(--space-7);
+  border-radius: var(--radius-card);
+  background: var(--surface-brand-bg);
+  color: var(--surface-brand-fg);
   font-family: var(--font-display);
   box-shadow: var(--shadow-brand-card);
+  text-align: center;
+  overflow: auto;
+}
+
+.invitee-submitted-close {
+  position: absolute;
+  top: var(--space-5);
+  right: var(--space-5);
+  width: var(--space-12);
+  height: var(--space-12);
+  padding: var(--space-2);
+  background: var(--surface-brand-control);
+  color: var(--color-ink);
+  z-index: 1;
+}
+
+.invitee-submitted-close:active {
+  background: var(--surface-brand-control-subtle);
+}
+
+.invitee-submitted-close .tool-icon-frame {
+  width: var(--space-9);
+  height: var(--space-9);
+}
+
+.invitee-submitted-banner h1,
+.invitee-submitted-banner p {
+  margin: 0;
+}
+
+.invitee-submitted-banner h1 {
+  box-sizing: border-box;
+  width: 100%;
+  padding-inline: var(--space-13);
+  font-size: clamp(var(--text-title), 8.5vw, var(--text-hero));
+  line-height: 0.9;
+  white-space: nowrap;
+}
+
+.invitee-submitted-hero,
+.invitee-submitted-confirmation {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+}
+
+.invitee-submitted-hero {
+  gap: var(--space-10);
+}
+
+.invitee-submitted-composition {
+  width: min(40vw, 144px);
+  aspect-ratio: 9 / 16;
+  border-radius: var(--radius-canvas);
+  overflow: hidden;
+  background: var(--color-ink);
+  box-shadow: var(--shadow-brand-card);
+}
+
+.invitee-submitted-composition img,
+.invitee-submitted-composition video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.invitee-submitted-copy {
+  font-size: var(--text-lg);
+  color: var(--surface-brand-muted);
+}
+
+.invitee-submitted-confirmation {
+  gap: var(--space-5);
+}
+
+.invitee-submitted-actions {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+}
+
+.invitee-submitted-action.brand-button {
+  width: 100%;
+  min-height: calc(var(--space-13) + var(--space-3));
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-8);
+  font-size: var(--text-md);
+}
+
+.invitee-submitted-share {
+  width: 100%;
+  display: grid;
+  gap: var(--space-4);
+  justify-items: center;
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--surface-brand-control);
+}
+
+.invitee-submitted-share-title {
+  font-size: var(--text-sm);
+  color: var(--surface-brand-muted);
+}
+
+.invitee-submitted-share-row {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-7);
+  width: 100%;
+}
+
+.invitee-submitted-share-btn {
+  width: calc(var(--space-13) + var(--space-7));
+  min-width: calc(var(--space-13) + var(--space-7));
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-ink);
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-display);
+  cursor: pointer;
+  transition: opacity var(--motion-fast), transform var(--motion-fast);
+}
+
+.invitee-submitted-share-btn:active {
+  opacity: 0.78;
+  transform: scale(0.95);
+}
+
+.invitee-submitted-share-icon {
+  width: var(--space-13);
+  height: var(--space-13);
+  border-radius: var(--radius-icon);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--surface-brand-control);
+  color: var(--color-ink);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+  font-size: var(--text-sm);
+  line-height: 1;
+}
+
+.invitee-submitted-share-icon .tool-icon-frame {
+  width: var(--space-10);
+  height: var(--space-10);
+}
+
+.invitee-submitted-share-icon .tool-icon-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.invitee-submitted-share-label {
+  width: 100%;
+  overflow: hidden;
+  color: var(--surface-brand-muted);
+  font-size: var(--text-xs);
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invitee-submitted-share-btn--save .invitee-submitted-share-icon,
+.invitee-submitted-share-btn--more .invitee-submitted-share-icon {
+  background: var(--color-ink);
+  color: var(--color-brand-yellow);
+}
+
+@media (max-height: 760px) {
+  .invitee-submitted-banner {
+    gap: var(--space-5);
+    padding-block: var(--space-7);
+  }
+
+  .invitee-submitted-hero {
+    gap: var(--space-7);
+  }
+
+  .invitee-submitted-composition {
+    width: min(38vw, 132px);
+  }
+
+  .invitee-submitted-confirmation {
+    gap: var(--space-4);
+  }
 }

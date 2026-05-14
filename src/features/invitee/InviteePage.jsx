@@ -1,9 +1,8 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import '../../styles/invitee.css';
 import Toast from '../../components/ui/Toast.jsx';
 import GlassIconButton from '../../components/ui/GlassIconButton.jsx';
-import SolidIconButton from '../../components/ui/SolidIconButton.jsx';
 import FrameCanvas from '../editor/components/FrameCanvas.jsx';
 import ExitButton from '../editor/components/ExitButton.jsx';
 import UndoRedoCluster from '../editor/components/UndoRedoCluster.jsx';
@@ -23,7 +22,7 @@ import { useCanvasDrawing } from '../editor/hooks/useCanvasDrawing.js';
 import { useStickerSystem } from '../editor/hooks/useStickerSystem.js';
 import { useHistory } from '../editor/hooks/useHistory.js';
 import { useTextTool } from '../editor/hooks/useTextTool.js';
-import { useToolbarState } from '../editor/hooks/useToolbarState.js';
+import { filterOrderedToolIds, RETAKE_REVIEW_TOOL_IDS, useToolbarState } from '../editor/hooks/useToolbarState.js';
 import useInviterLayerStack from '../editor/hooks/useInviterLayerStack.js';
 import VerticalToolbar from '../inviter/components/VerticalToolbar.jsx';
 import BottomBar from '../inviter/components/BottomBar.jsx';
@@ -32,9 +31,20 @@ import { chooseRetakeVideoMimeType, drawRetakeWatermark } from '../editor/utils/
 import { getInvite, recordRetake, uploadRetakeMedia } from '../../lib/api.js';
 import { INVITEE_FLOW_STATES } from './state.js';
 import InviteAcceptCard from './components/InviteAcceptCard.jsx';
+import SubmittedRetakeBanner from './components/SubmittedRetakeBanner.jsx';
 
 const CANVAS_SIZE = { width: 414, height: 736 };
 const INVITEE_CAMERA_GESTURE_HINT_MS = 2600;
+const INVITEE_SUBMIT_MIN_BUSY_MS = 900;
+const INVITEE_COMPOSITION_BG = '#000';
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function waitForMinimumBusy(startedAt) {
+  return wait(Math.max(0, INVITEE_SUBMIT_MIN_BUSY_MS - (Date.now() - startedAt)));
+}
 
 function loadImage(src) {
   return new Promise((resolve, reject) => {
@@ -55,9 +65,25 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function getAvatarText(name) {
+  const cleanName = String(name || '').trim();
+  if (!cleanName) return '';
+  const parts = cleanName.split(/\s+/).filter(Boolean);
+  const initials = parts.map(part => part[0]).join('');
+  return (initials.length > 1 ? initials : cleanName.slice(0, 2)).toUpperCase();
+}
+
+function createSubmittedRetakeFile(preview) {
+  if (!preview?.blob || !preview?.filename) return null;
+  return new File([preview.blob], preview.filename, {
+    type: preview.blob.type || 'application/octet-stream',
+  });
+}
+
 export default function InviteePage() {
   const { inviteId: routeInviteId } = useParams();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const inviteId = routeInviteId || searchParams.get('id') || '';
   const canvasRef = useRef(null);
   const ctxRef = useRef(null);
@@ -84,6 +110,8 @@ export default function InviteePage() {
   const [accepted, setAccepted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [submittedBannerVisible, setSubmittedBannerVisible] = useState(false);
+  const [submittedPreview, setSubmittedPreview] = useState(null);
   const [activeTool, setActiveTool] = useState(null);
   const [toastMsg, setToastMsg] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
@@ -118,6 +146,12 @@ export default function InviteePage() {
     onToast: showToast,
     label: 'invitee',
   });
+
+  useEffect(() => {
+    return () => {
+      if (submittedPreview?.url) URL.revokeObjectURL(submittedPreview.url);
+    };
+  }, [submittedPreview]);
   const {
     confirmVisible, confirmScrimVisible, confirmMsg, confirmOkLabel, confirmDanger,
     showConfirm, dismissConfirm,
@@ -195,10 +229,7 @@ export default function InviteePage() {
     orderedToolIds, addRecentTool,
     handleToggleTools, handleToolbarInteraction, handleToolMouseEnter, handleToolMouseLeave,
   } = useToolbarState();
-  const reviewToolIds = useMemo(
-    () => orderedToolIds.filter(toolId => toolId !== 'download'),
-    [orderedToolIds]
-  );
+  const reviewToolIds = filterOrderedToolIds(orderedToolIds, RETAKE_REVIEW_TOOL_IDS);
   const {
     textToolActive,
     txtFont, setTxtFont,
@@ -338,6 +369,8 @@ export default function InviteePage() {
   const acceptInvite = useCallback(async () => {
     setAccepted(true);
     setSubmitted(false);
+    setSubmittedBannerVisible(false);
+    setSubmittedPreview(null);
     activeToolRef.current = null;
     setActiveTool(null);
     clearReviewCanvas();
@@ -346,6 +379,8 @@ export default function InviteePage() {
 
   const handleRetake = useCallback(async () => {
     setSubmitted(false);
+    setSubmittedBannerVisible(false);
+    setSubmittedPreview(null);
     activeToolRef.current = null;
     setActiveTool(null);
     setScrimVisible(false);
@@ -360,6 +395,19 @@ export default function InviteePage() {
     clearReviewCanvas();
     await camera.returnToLive();
   }, [camera, clearReviewCanvas]);
+
+  const handleStartOwnFrame = useCallback(() => {
+    navigate('/inviter');
+  }, [navigate]);
+
+  const handleDismissSubmittedBanner = useCallback(() => {
+    setSubmittedBannerVisible(false);
+    setToolsVisible(true);
+    setExitBtnOut(false);
+    setUndoRedoOut(false);
+    setToolsOut(false);
+    setBottomBarOut(false);
+  }, []);
 
   const handleBackToInvite = useCallback(() => {
     camera.stopCamera();
@@ -388,6 +436,7 @@ export default function InviteePage() {
     e.target.value = '';
     if (!file) return;
     setSubmitted(false);
+    setSubmittedBannerVisible(false);
     activeToolRef.current = null;
     setActiveTool(null);
     clearReviewCanvas();
@@ -718,6 +767,8 @@ export default function InviteePage() {
     const ctx = out.getContext('2d');
     const photo = await loadImage(camera.photoUrl);
     const frame = await loadImage(invite.frameUrl);
+    ctx.fillStyle = INVITEE_COMPOSITION_BG;
+    ctx.fillRect(0, 0, out.width, out.height);
     ctx.drawImage(photo, 0, 0, out.width, out.height);
     const overlayCanvas = document.createElement('canvas');
     overlayCanvas.width = out.width;
@@ -792,6 +843,8 @@ export default function InviteePage() {
       };
 
       const draw = () => {
+        ctx.fillStyle = INVITEE_COMPOSITION_BG;
+        ctx.fillRect(0, 0, out.width, out.height);
         ctx.drawImage(video, 0, 0, out.width, out.height);
         ctx.drawImage(overlayCanvas, 0, 0, out.width, out.height);
         drawRetakeWatermark(ctx, out.width, out.height);
@@ -848,15 +901,17 @@ export default function InviteePage() {
 
   const handleSubmit = useCallback(async () => {
     if (!invite || submitting) return;
+    const submitStartedAt = Date.now();
     setSubmitting(true);
     try {
       const blob = await getSubmissionBlob();
       const mode = camera.videoReview ? 'video' : 'photo';
       const ext = mode === 'video' ? 'webm' : 'jpg';
+      const filename = `retake-${Date.now()}.${ext}`;
       const uploaded = await uploadRetakeMedia({
         inviteId: invite.id,
         mode,
-        filename: `retake-${Date.now()}.${ext}`,
+        filename,
         blob,
       });
       await recordRetake({
@@ -867,8 +922,21 @@ export default function InviteePage() {
         frameName: invite.frameName,
         username: invite.username,
       });
+      setSubmittedPreview({
+        blob,
+        filename,
+        mode,
+        url: URL.createObjectURL(blob),
+      });
+      activeToolRef.current = null;
+      setActiveTool(null);
+      setTmIn(false);
+      setTmLeftIn(false);
+      setTmBarMode(null);
+      setToolsVisible(false);
+      await waitForMinimumBusy(submitStartedAt);
       setSubmitted(true);
-      showToast('Retake sent');
+      setSubmittedBannerVisible(true);
     } catch (err) {
       console.warn('[invitee] Submit failed:', err);
       showToast(err?.message || 'Could not send Retake');
@@ -876,6 +944,48 @@ export default function InviteePage() {
       setSubmitting(false);
     }
   }, [camera.videoReview, getSubmissionBlob, invite, showToast, submitting]);
+
+  const handleSubmittedSave = useCallback(() => {
+    if (!submittedPreview?.blob || !submittedPreview?.filename) {
+      showToast('Retake is not ready');
+      return;
+    }
+    downloadBlob(submittedPreview.blob, submittedPreview.filename);
+    showToast('Saved!');
+  }, [showToast, submittedPreview]);
+
+  const handleSubmittedShare = useCallback(async (targetLabel = 'More') => {
+    const file = createSubmittedRetakeFile(submittedPreview);
+    if (!file) {
+      showToast('Retake is not ready');
+      return;
+    }
+
+    const sharePayload = {
+      title: 'My Retake',
+      text: `Retake sent to ${invite?.username || 'them'}`,
+    };
+
+    if (navigator.share) {
+      try {
+        if (navigator.canShare && !navigator.canShare({ files: [file] })) {
+          downloadBlob(submittedPreview.blob, submittedPreview.filename);
+          showToast('Saved!');
+          return;
+        }
+        await navigator.share({ ...sharePayload, files: [file] });
+        return;
+      } catch (err) {
+        if (err?.name === 'AbortError') return;
+        console.warn(`[invitee] ${targetLabel} share failed:`, err);
+      }
+    }
+
+    downloadBlob(submittedPreview.blob, submittedPreview.filename);
+    showToast('Saved!');
+  }, [invite?.username, showToast, submittedPreview]);
+
+  const showReviewChrome = camera.review && !camera.captureBusy && !submittedBannerVisible;
 
   if (!accepted) {
     return (
@@ -984,7 +1094,7 @@ export default function InviteePage() {
         </>
       )}
 
-      {camera.review && !camera.captureBusy && (
+      {showReviewChrome && (
         <>
           <ExitButton
             visible
@@ -1022,7 +1132,7 @@ export default function InviteePage() {
         </>
       )}
 
-      {camera.review && !camera.captureBusy && (
+      {showReviewChrome && (
         <RetakeCameraBottomBar
           visible
           out={bottomBarOut}
@@ -1030,24 +1140,39 @@ export default function InviteePage() {
           glassControls
           hideTitle
           review={false}
-          title={submitted ? 'Sent!' : invite?.frameName || 'Retake'}
+          title={invite?.frameName || 'Retake'}
           titleLabel="Invite frame name"
           leftLabel="Retake photo or video"
           onLeft={handleRetake}
           onTitle={() => {}}
           showSecondary={false}
-          primaryIcon={submitted ? 'check' : 'share'}
-          primaryLabel={submitting ? 'Sending Retake' : 'Submit Retake'}
-          primaryText={submitting ? 'Sending' : 'Share'}
+          primaryIcon={null}
+          primaryAvatar={{
+            src: invite?.avatarUrl || invite?.inviterAvatarUrl,
+            showPlaceholder: true,
+            text: getAvatarText(invite?.username) || '?',
+          }}
+          primaryText="Send"
+          primaryBusy={submitting}
+          primaryLabel={
+            submitting
+              ? `Sending Retake to ${invite?.username || 'inviter'}`
+              : `Send Retake to ${invite?.username || 'inviter'}`
+          }
           onPrimary={handleSubmit}
         />
       )}
 
-      {submitted && (
-        <div className="invitee-submitted-banner">
-          <span>Retake sent</span>
-          <SolidIconButton icon="photo" label="Take another" onClick={handleRetake} />
-        </div>
+      {submittedBannerVisible && (
+        <SubmittedRetakeBanner
+          preview={submittedPreview}
+          username={invite?.username}
+          onClose={handleDismissSubmittedBanner}
+          onStartOwnFrame={handleStartOwnFrame}
+          onRetake={handleRetake}
+          onSave={handleSubmittedSave}
+          onShare={handleSubmittedShare}
+        />
       )}
 
       <DrawingToolOverlays

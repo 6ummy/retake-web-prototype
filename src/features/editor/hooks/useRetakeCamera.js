@@ -24,6 +24,24 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function safelySetPointerCapture(target, pointerId) {
+  if (!target?.setPointerCapture) return;
+  try {
+    target.setPointerCapture(pointerId);
+  } catch {
+    // Pointer capture can fail if Safari has already released the pointer.
+  }
+}
+
+function safelyReleasePointerCapture(target, pointerId) {
+  if (!target?.releasePointerCapture || !target.hasPointerCapture?.(pointerId)) return;
+  try {
+    target.releasePointerCapture(pointerId);
+  } catch {
+    // Ignore release races; local pointer state still gets cleared.
+  }
+}
+
 export default function useRetakeCamera({
   getCanvasSize,
   onToast,
@@ -365,7 +383,7 @@ export default function useRetakeCamera({
     pointerMovedRef.current = false;
     pointerDownRef.current = true;
     pointerIdRef.current = e.pointerId;
-    e.currentTarget.setPointerCapture?.(e.pointerId);
+    safelySetPointerCapture(e.currentTarget, e.pointerId);
     clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = setTimeout(() => {
       longPressTimerRef.current = null;
@@ -391,9 +409,7 @@ export default function useRetakeCamera({
       pointerMovedRef.current = movedCamera;
       return;
     }
-    if (e.currentTarget.releasePointerCapture && e.currentTarget.hasPointerCapture?.(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    }
+    safelyReleasePointerCapture(e.currentTarget, e.pointerId);
     const shouldCapturePhoto = !!longPressTimerRef.current;
     pointerDownRef.current = false;
     pointerIdRef.current = null;
@@ -411,21 +427,11 @@ export default function useRetakeCamera({
     }
     if (!shouldCapturePhoto || movedCamera) return;
 
-    const now = Date.now();
-    if (now - lastTapAtRef.current < RETAKE_CAMERA_DOUBLE_TAP_MS) {
-      clearTimeout(tapCaptureTimerRef.current);
-      tapCaptureTimerRef.current = null;
-      lastTapAtRef.current = 0;
-      await flipCamera();
-      return;
-    }
-    lastTapAtRef.current = now;
     clearTimeout(tapCaptureTimerRef.current);
-    tapCaptureTimerRef.current = setTimeout(() => {
-      lastTapAtRef.current = 0;
-      startTimedAction('photo', capturePhoto);
-    }, RETAKE_CAMERA_DOUBLE_TAP_MS);
-  }, [cameraTransform, cancelCountdown, capturePhoto, flipCamera, mode, startTimedAction, stopRecording]);
+    tapCaptureTimerRef.current = null;
+    lastTapAtRef.current = 0;
+    startTimedAction('photo', capturePhoto);
+  }, [cameraTransform, cancelCountdown, capturePhoto, mode, startTimedAction, stopRecording]);
 
   const handlePointerCancel = useCallback((e) => {
     if (mode !== RETAKE_CAMERA_MODE.LIVE) return;
@@ -447,7 +453,7 @@ export default function useRetakeCamera({
     pointerMovedRef.current = e.isPrimary === false;
     pointerDownRef.current = true;
     pointerIdRef.current = e.pointerId;
-    e.currentTarget.setPointerCapture?.(e.pointerId);
+    safelySetPointerCapture(e.currentTarget, e.pointerId);
     clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = null;
   }, [cameraTransform, mode]);
@@ -466,9 +472,7 @@ export default function useRetakeCamera({
       pointerMovedRef.current = movedCamera;
       return;
     }
-    if (e.currentTarget.releasePointerCapture && e.currentTarget.hasPointerCapture?.(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    }
+    safelyReleasePointerCapture(e.currentTarget, e.pointerId);
     pointerDownRef.current = false;
     pointerIdRef.current = null;
     pointerMovedRef.current = false;

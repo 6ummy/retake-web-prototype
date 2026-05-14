@@ -13,14 +13,21 @@ const useLocalHttps = (
   && fs.existsSync(httpsCertPath)
 );
 
-export default defineConfig({
-  plugins: [react()],
-  server: useLocalHttps ? {
+const serverConfig = {
+  host: '0.0.0.0',
+  port: 5174,
+  strictPort: true,
+  ...(useLocalHttps ? {
     https: {
       key: fs.readFileSync(httpsKeyPath),
       cert: fs.readFileSync(httpsCertPath),
     },
-  } : {},
+  } : {}),
+};
+
+export default defineConfig({
+  plugins: [react()],
+  server: serverConfig,
   build: {
     outDir: 'dist',
   },

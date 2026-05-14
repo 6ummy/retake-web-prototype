@@ -1,6 +1,32 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
 
-const ALL_TOOL_IDS = ['text', 'stickers', 'doodle', 'magicPen', 'download'];
+export const TOOL_IDS = Object.freeze({
+  TEXT: 'text',
+  STICKERS: 'stickers',
+  DOODLE: 'doodle',
+  MAGIC_PEN: 'magicPen',
+  DOWNLOAD: 'download',
+});
+
+export const ALL_TOOL_IDS = Object.freeze([
+  TOOL_IDS.TEXT,
+  TOOL_IDS.STICKERS,
+  TOOL_IDS.DOODLE,
+  TOOL_IDS.MAGIC_PEN,
+  TOOL_IDS.DOWNLOAD,
+]);
+
+export const RETAKE_REVIEW_TOOL_IDS = Object.freeze([
+  TOOL_IDS.TEXT,
+  TOOL_IDS.STICKERS,
+  TOOL_IDS.DOODLE,
+  TOOL_IDS.DOWNLOAD,
+]);
+
+export function filterOrderedToolIds(orderedToolIds, allowedToolIds) {
+  const allowed = new Set(allowedToolIds);
+  return orderedToolIds.filter(toolId => allowed.has(toolId));
+}
 
 export function useToolbarState() {
   const [toolsCollapsed, setToolsCollapsed] = useState(false);

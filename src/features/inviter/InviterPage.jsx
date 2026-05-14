@@ -5,7 +5,7 @@ import { useToast } from '../editor/hooks/useToast';
 import { useStickerSystem } from '../editor/hooks/useStickerSystem';
 import { useCanvasDrawing } from '../editor/hooks/useCanvasDrawing';
 import { useConfirmDialog } from '../editor/hooks/useConfirmDialog';
-import { useToolbarState } from '../editor/hooks/useToolbarState';
+import { filterOrderedToolIds, RETAKE_REVIEW_TOOL_IDS, useToolbarState } from '../editor/hooks/useToolbarState';
 import { useHistory } from '../editor/hooks/useHistory';
 import { useTextTool } from '../editor/hooks/useTextTool';
 import useInviterLayerStack from '../editor/hooks/useInviterLayerStack.js';
@@ -410,7 +410,7 @@ export default function InviterPage() {
     if (!image || !canvas || !targetCtx) return false;
     drawContainedImageWithBackground(targetCtx, image, canvas.width, canvas.height, {
       backgroundColor: s2GalleryBackgroundRef.current,
-      fit: 'width',
+      fit: 'portrait-height',
       transform: s2GalleryTransform.transformRef.current,
     });
     return true;
@@ -510,12 +510,9 @@ export default function InviterPage() {
     orderedToolIds, addRecentTool,
     handleToggleTools, handleToolbarInteraction, handleToolMouseEnter, handleToolMouseLeave,
   } = useToolbarState();
-  const step2ToolIds = useMemo(
-    () => orderedToolIds.filter(toolId => toolId !== 'download'),
-    [orderedToolIds]
-  );
+  const step2ToolIds = orderedToolIds;
   const step3ToolIds = useMemo(
-    () => orderedToolIds.filter(toolId => ['text', 'stickers', 'doodle', 'download'].includes(toolId)),
+    () => filterOrderedToolIds(orderedToolIds, RETAKE_REVIEW_TOOL_IDS),
     [orderedToolIds]
   );
   const step3ZoomOptions = useMemo(() => {
