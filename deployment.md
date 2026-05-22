@@ -315,30 +315,118 @@ retake-web-prototype\node_modules\              npm install 결과 (73 packages)
 
 ---
 
-## 10. PC IP가 바뀌었을 때
+## 10. 네트워크가 바뀌었을 때 (카페·공용 Wi-Fi 등)
 
-PC IP는 다음 경우 바뀐다:
-- 다른 Wi-Fi에 연결
+PC의 사설 IP는 다음 경우 바뀐다:
+- 다른 Wi-Fi에 연결 (집 → 카페, 카페 A → 카페 B 등)
 - 공유기 재시작
 - DHCP 임대 만료 후 갱신
 
-새 IP 확인:
+> 💡 `localhost` / `127.0.0.1`은 네트워크와 무관하게 PC 자기 자신에서는 항상 동작한다.
+> **노트북 브라우저에서만 테스트할 거면** 아무 설정도 필요 없다.
+> 아이폰 등 외부 기기로 테스트하려면 아래 절차.
+
+### 10-1. 새 네트워크 셋업 3단계 (가장 흔한 케이스)
+
+#### 1) 새 IP 확인
 ```powershell
 ipconfig
-# "Wireless LAN adapter Wi-Fi" 섹션의 "IPv4 Address" 줄 참고
 ```
+"`Wireless LAN adapter Wi-Fi`" 섹션의 "IPv4 Address" 줄 메모.
+카페마다 대역이 다름:
+- 집(Comcast 등) → `10.0.0.x`
+- 공유기 일반 → `192.168.x.x`
+- 스타벅스 등 → `172.x.x.x`
 
-**새 IP를 인증서에 반영**해야 iPhone 접속 가능:
+#### 2) 인증서 재발급 (예: 새 IP가 `172.20.10.5` 라고 가정)
 ```powershell
+$mkcert = "C:\Users\jshin\AppData\Local\Microsoft\WinGet\Packages\FiloSottile.mkcert_Microsoft.Winget.Source_8wekyb3d8bbwe\mkcert.exe"
 $certDir = "C:\Users\jshin\Documents\Project\Make_Your_Frame\retake-web-prototype\.cert"
-& "C:\Users\jshin\AppData\Local\Microsoft\WinGet\Packages\FiloSottile.mkcert_Microsoft.Winget.Source_8wekyb3d8bbwe\mkcert.exe" `
-  -key-file  "$certDir\localhost-key.pem" `
-  -cert-file "$certDir\localhost-cert.pem" `
-  localhost 127.0.0.1 <새IP>
+& $mkcert -key-file "$certDir\localhost-key.pem" -cert-file "$certDir\localhost-cert.pem" `
+  localhost 127.0.0.1 10.0.0.25 172.20.10.5
 ```
-그리고 dev server 재시작 + iPhone Safari에서 `https://<새IP>:5174/`로 접속.
+> 기존 IP(`10.0.0.25`)도 함께 적어두면 집·카페 양쪽에서 같은 인증서로 동작.
+> mkcert SAN(Subject Alternative Name)에 호스트 여러 개를 동시에 등록할 수 있다.
 
-> 💡 매번 바뀌는 게 귀찮으면 공유기에서 PC MAC 주소에 **고정 IP를 DHCP 예약**으로 묶어둬라.
+#### 3) dev 서버 재시작
+```powershell
+Set-Location "C:\Users\jshin\Documents\Project\Make_Your_Frame\retake-web-prototype"
+$env:VITE_DEV_HTTPS = "1"
+npx vite
+```
+출력의 `Network:` 줄이 `https://172.20.10.5:5174/`로 바뀜 → 아이폰에서 이 주소로 접속.
+
+> ✅ 아이폰 측은 **추가 작업 불필요**.
+> 한 번 신뢰시킨 mkcert 루트 CA는 모든 자식 인증서를 영구히 신뢰한다.
+
+### 10-2. 자주 다니는 곳들 IP를 미리 등록해두기 (편의 팁)
+```powershell
+& $mkcert -key-file "$certDir\localhost-key.pem" -cert-file "$certDir\localhost-cert.pem" `
+  localhost 127.0.0.1 `
+  10.0.0.25 `
+  192.168.0.10 192.168.1.10 `
+  172.20.10.2 172.20.10.3 172.20.10.4 172.20.10.5
+```
+한 번에 여러 IP를 등록해두면 네트워크 바뀔 때마다 재발급 안 해도 된다.
+새 카페에서는 그 카페에서 받은 IP만 확인하면 됨.
+
+### 10-3. 시나리오별 가이드
+
+| 상황 | 권장 방법 |
+|---|---|
+| 노트북 브라우저로만 테스트 | `https://localhost:5174/` — 네트워크 무관, 셋업 0 |
+| 카페에서 노트북 + 아이폰 (같은 Wi-Fi) | 위 10-1 3단계 (새 IP 확인 → 재발급 → 재시작) |
+| 카페 Wi-Fi가 **AP 격리(Client Isolation)** 켜진 곳 | 같은 Wi-Fi인데도 기기 간 통신 차단 → 10-4 터널 사용 |
+| 아이폰만 셀룰러 / 노트북은 카페 Wi-Fi (다른 네트워크) | 10-4 터널 사용 또는 아이폰 핫스팟에 노트북 붙이기 |
+| 자주 카페·집 왔다갔다 + 항상 아이폰 테스트 | **Tailscale** 영구 IP (10-5) 강력 추천 |
+
+### 10-4. 임시: 터널 서비스 (어디서든 접근 가능)
+
+#### Cloudflare Tunnel (무료, 가입 불필요)
+```powershell
+winget install Cloudflare.cloudflared
+# dev 서버가 돌고 있는 상태에서, 새 PowerShell 창:
+cloudflared tunnel --url https://localhost:5174 --no-tls-verify
+```
+출력에 `https://random-words-1234.trycloudflare.com` 같은 임시 URL 표시.
+- ✅ 인터넷 어디서든 접근 가능 (셀룰러 포함)
+- ✅ Cloudflare가 발급한 진짜 인증서 → **mkcert / 아이폰 CA 신뢰 작업 완전 불필요**
+- ⚠️ 명령어 끄면 URL 사라짐 (임시 도메인)
+
+#### ngrok (대안)
+```powershell
+winget install ngrok.ngrok
+ngrok config add-authtoken <발급받은_토큰>
+ngrok http https://localhost:5174
+```
+무료 플랜은 URL이 매번 바뀌고 첫 진입 시 안내 페이지 1회 표시.
+
+### 10-5. 영구 해결: Tailscale (장기적으로 가장 깔끔)
+
+본인 기기들끼리(노트북+아이폰+다른 기기) 가상 사설망을 만들어
+**네트워크가 바뀌어도 IP가 절대 안 바뀌게** 만드는 방법.
+
+1. PC와 아이폰 모두 [Tailscale](https://tailscale.com) 설치 → 같은 계정으로 로그인 (Google/Apple SSO)
+2. PC의 Tailscale IP 확인:
+   ```powershell
+   tailscale ip -4
+   # 예: 100.92.143.7
+   ```
+3. **인증서 한 번만** 발급 (이 IP는 영구 고정):
+   ```powershell
+   & $mkcert -key-file "$certDir\localhost-key.pem" -cert-file "$certDir\localhost-cert.pem" `
+     localhost 127.0.0.1 100.92.143.7
+   ```
+4. 어디서든 (카페·셀룰러·기차·해외 호텔 등) 아이폰 Safari → `https://100.92.143.7:5174/`
+
+- ✅ 무료 (개인 사용 100대까지)
+- ✅ 카페 AP 격리도 통과 (WireGuard 터널)
+- ✅ 한 번 셋업하면 끝, 그 후 평생 인증서 재발급 불필요
+- ⚠️ PC와 아이폰 모두 Tailscale 앱이 켜져 있어야 함
+
+### 10-6. 집 네트워크에서 IP 고정시키기 (옵션)
+공유기 관리 페이지에서 PC MAC 주소에 **고정 IP를 DHCP 예약**으로 묶어두면
+집에선 매번 같은 IP가 할당된다. 단, 이건 집 한 곳에서만 유효.
 
 ---
 
