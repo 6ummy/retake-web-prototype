@@ -286,6 +286,32 @@ body.inviter-mode #s2GalleryCanvas {
   transform: scale(0.92);
 }
 
+/* ════════════════════════════════════════════
+   STEP 3 LIVE — 3-button bottom layout
+   gallery (left) · share (center) · flip (right)
+   Mirrors the invitee camera screen pattern so users
+   develop muscle memory across the two flows.
+════════════════════════════════════════════ */
+.inviter-step3-gallery-btn,
+.inviter-step3-share-btn,
+.inviter-step3-flip-btn {
+  position: absolute;
+  bottom: var(--canvas-chrome-inset);
+  z-index: var(--z-editor-chrome);
+}
+.inviter-step3-gallery-btn { left: var(--canvas-chrome-inset); }
+.inviter-step3-flip-btn    { right: var(--canvas-chrome-inset); }
+.inviter-step3-share-btn {
+  left: 50%;
+  transform: translateX(-50%);
+}
+.inviter-step3-share-label {
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  letter-spacing: 0.02em;
+  padding: 0 var(--space-2);
+}
+
 body.inviter-mode #editCanvas {
   position: absolute; inset: 0;
   width: 100% !important; height: 100% !important;
@@ -1940,6 +1966,48 @@ body.inviter-mode .new-sticker-screen.ns-visible { transform: translateY(0); opa
   height: 36px;
   border-radius: 10px;
 }
+/* Stage A pill (mode selection only — no opacity slider). The icon row
+   stretches edge-to-edge of the pill so 5 modes (Loop / Pen / Circle / Rect
+   / Smart) get evenly distributed across the viewport without crowding. */
+.sticker-maker-stageA {
+  width: calc(100% - 24px);
+  padding: 7px 12px;
+  justify-content: center;
+}
+.sticker-maker-stageA .selection-mode-buttons,
+.sticker-maker-stageA .sticker-maker-modes {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  justify-content: space-around;
+  gap: 6px;
+}
+.sticker-maker-stageA .selection-tool-btn {
+  flex: 1 1 0;
+  max-width: 56px;
+  min-width: 40px;
+}
+/* Two-row sticker maker bottom UI:
+   Row 1 — mode buttons (Loop / Draw / Erase) + Clear
+   Row 2 — opacity slider + Apply button
+   The two rows sit inside the column flex of #nsBarLasso, stacked with a
+   small gap so they read as a single grouped control. */
+.sticker-maker-row-tools,
+.sticker-maker-row-apply {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-top: 6px;
+}
+.sticker-maker-row-apply {
+  width: calc(100% - 24px);
+  justify-content: stretch;
+}
+.sticker-maker-row-apply .ns-apply-btn {
+  margin-left: 8px;
+  flex-shrink: 0;
+}
 .selection-mode-bar,
 .sticker-shape-stage {
   display: flex;
@@ -2035,6 +2103,37 @@ body.inviter-mode .new-sticker-screen.ns-visible { transform: translateY(0); opa
 }
 #nsBarRefine .ns-pri { border-radius: 16px; }
 
+/* "Clear All" + Apply row in the sticker refine bar. Clear All is secondary
+   (neutral) and sits to the left so the user's thumb naturally reaches Apply
+   on the right. Apply keeps its existing yellow `.ns-pri` style and width. */
+.ns-refine-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
+}
+.ns-refine-actions .ns-pri {
+  flex: 1;
+}
+.ns-clear-all-btn {
+  flex-shrink: 0;
+  padding: 0 18px;
+  height: 52px;
+  border: 1.5px solid rgba(255,255,255,0.32);
+  border-radius: 16px;
+  background: rgba(24,22,40,0.55);
+  color: rgba(255,255,255,0.92);
+  font-family: 'Bedstead', monospace;
+  font-size: 13px;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.12s;
+}
+.ns-clear-all-btn:active {
+  transform: scale(0.97);
+  background: rgba(24,22,40,0.78);
+}
+
 .ns-pri {
   width: 100%; flex-shrink: 0;
   height: 52px; border: none; border-radius: 18px;
@@ -2117,6 +2216,33 @@ body.inviter-mode #stickerOverlay.stk-active { pointer-events: none; }
   pointer-events: none;
 }
 .placed-sticker.stk-selected { outline: 2px dashed rgba(255,255,255,0.55); border-radius: 6px; outline-offset: 4px; }
+
+/* Per-sticker delete (X) button — shown only when sticker is selected.
+   Counter-scaled in JS (see useStickerSystem.applyStickerTransform) so the
+   button stays at a constant visual size and orientation regardless of the
+   sticker's own scale and rotation. */
+.stk-delete-btn {
+  display: none;
+  position: absolute;
+  top: -14px;
+  right: -14px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255,255,255,0.92);
+  background: rgba(24,22,40,0.92);
+  color: #fff;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+  transform-origin: center;
+  z-index: 2;
+  touch-action: none;
+}
+.stk-delete-btn:active { background: rgba(210,40,40,0.92); }
+.stk-selected > .stk-delete-btn { display: flex; }
 
 /* Trash bin — shown while dragging a sticker */
 #stkTrashBin {
@@ -2243,6 +2369,10 @@ body.inviter-mode #stickerOverlay.stk-active { pointer-events: none; }
 }
 .placed-text.stk-selected,
 .placed-photo.stk-selected { outline: 2px dashed rgba(255,255,255,0.55); border-radius: 6px; outline-offset: 4px; }
+
+/* Reuse delete button on text/photo items too. */
+.placed-text.stk-selected > .stk-delete-btn,
+.placed-photo.stk-selected > .stk-delete-btn { display: flex; }
 
 /* Shared vertical size rail */
 .size-slider-rail {

@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import '../../styles/inviter.css';
 import SolidIconButton from '../../components/ui/SolidIconButton';
+import GlassIconButton from '../../components/ui/GlassIconButton.jsx';
 import { useToast } from '../editor/hooks/useToast';
 import { useStickerSystem } from '../editor/hooks/useStickerSystem';
 import { useCanvasDrawing } from '../editor/hooks/useCanvasDrawing';
@@ -78,8 +79,39 @@ function loadSavedFrames() {
   }
 }
 
+// iOS Safari caps localStorage at ~5 MB per origin. Saved frames carry a full
+// data URL (1–2 MB each), so the quota is gone in a handful of saves. Try to
+// persist; on QuotaExceededError, drop the oldest frames and retry. If we
+// still can't fit, silently skip — the frames stay in the in-memory React
+// state for the current session.
+function isQuotaError(err) {
+  if (!err) return false;
+  return err.name === 'QuotaExceededError'
+    || err.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+    || err.code === 22
+    || err.code === 1014;
+}
+
 function persistSavedFrames(frames) {
-  window.localStorage?.setItem(SAVED_FRAMES_KEY, JSON.stringify(frames));
+  if (!window.localStorage) return;
+  let attempt = Array.isArray(frames) ? frames.slice() : [];
+  for (let i = 0; i < 5; i += 1) {
+    try {
+      window.localStorage.setItem(SAVED_FRAMES_KEY, JSON.stringify(attempt));
+      return;
+    } catch (err) {
+      if (!isQuotaError(err) || attempt.length <= 1) {
+        if (isQuotaError(err)) {
+          console.warn('[inviter] localStorage quota exceeded; skipping savedFrames persistence.');
+          try { window.localStorage.removeItem(SAVED_FRAMES_KEY); } catch { /* ignore */ }
+        }
+        return;
+      }
+      // Drop the oldest entry and retry. The most recent saved frames are the
+      // ones the user is most likely to want back.
+      attempt = attempt.slice(1);
+    }
+  }
 }
 
 function drawRetakeWatermark(ctx, width, height) {
@@ -306,6 +338,11 @@ export default function InviterPage() {
   const tmLeftPanelRef = useRef(null);
   const galleryInputRef = useRef(null);
   const cameraInputRef = useRef(null);
+  // Separate file input for the step3 LIVE preview: lets the user drop in a
+  // gallery photo *instead of* the live camera feed, without re-entering the
+  // step2 (frame editing) flow. The S2 galleryInput is bound to placePhotoFile
+  // which would jump back to editing — that's not what we want here.
+  const step3GalleryInputRef = useRef(null);
   const introPhotoFlowRef = useRef(false);
   const step3VideoRef = useRef(null);
   const step3StreamRef = useRef(null);
@@ -412,6 +449,9 @@ export default function InviterPage() {
       backgroundColor: s2GalleryBackgroundRef.current,
       fit: 'portrait-height',
       transform: s2GalleryTransform.transformRef.current,
+      // Allow zoom-out below "fill canvas height" — empty area is painted with
+      // the photo's average color (Instagram polaroid style).
+      allowZoomOut: true,
     });
     return true;
   }, [s2GalleryTransform.transformRef]);
@@ -525,7 +565,10 @@ export default function InviterPage() {
   const step3UsesScreenFlash = step3FlashEnabled && !step3UsesHardwareTorch;
 
   const {
-    editNameVisible, editNameInputValue, setEditNameInputValue,
+    editNameVisible,
+    editNameInputValue, setEditNameInputValue,
+    editUsernameInputValue, setEditUsernameInputValue,
+    usernameRef,
     openEditName, saveEditName,
   } = useEditName({ frameName, setFrameName, setScrimVisible });
 
@@ -1100,14 +1143,24 @@ export default function InviterPage() {
     out.height = height;
     const outCtx = out.getContext('2d');
     const photo = await loadImage(step3PhotoUrl);
-    outCtx.drawImage(photo, 0, 0, width, height);
+    // Apply the user's pan/zoom/rotate so the saved photo matches what they
+    // composed on screen. Captured photos already bake in the live-camera
+    // transform (and we reset the transform on capture), so this only carries
+    // post-capture adjustments. Gallery imports use this for *all* of their
+    // pan/zoom/rotate.
+    const photoTransform = step3CameraTransform.transformRef.current;
+    if (photoTransform) {
+      drawMediaCoverWithTransform(outCtx, photo, width, height, photoTransform);
+    } else {
+      outCtx.drawImage(photo, 0, 0, width, height);
+    }
     const frame = await loadImage(await buildFrameDataUrl());
     outCtx.drawImage(frame, 0, 0, width, height);
     drawRetakeWatermark(outCtx, width, height);
     return new Promise((resolve, reject) => {
       out.toBlob(blob => blob ? resolve(blob) : reject(new Error('Photo export failed')), 'image/jpeg', 0.92);
     });
-  }, [buildFrameDataUrl, getCanvasSize, step3PhotoUrl]);
+  }, [buildFrameDataUrl, getCanvasSize, step3CameraTransform, step3PhotoUrl]);
 
   const buildStep3VideoBlob = useCallback(async () => {
     if (!step3VideoUrl) throw new Error('No video captured');
@@ -1206,6 +1259,11 @@ export default function InviterPage() {
         } else {
           await navigator.share({ title, text });
         }
+        // navigator.share resolves only when the user picks a destination and
+        // the system share sheet completes. Confirm success so the user knows
+        // the action actually went through (otherwise the modal just vanishes
+        // silently and they wonder if anything happened).
+        showToast('Shared!');
         return;
       } catch (err) {
         if (err?.name === 'AbortError') return;
@@ -1428,8 +1486,16 @@ export default function InviterPage() {
   }, [captureStep3CameraPhoto, releaseStep3ScreenFlash, revokeStep3VideoUrl, showToast, setToolsCollapsed, stickerSys, stopStep3Camera, warmStep3ScreenFlash,
       toolsCollapsedRef, toolsCollapseTimerRef]);
 
+  // Step3 transforms (pan/zoom/rotate) are allowed in two modes:
+  //   - LIVE: pinch the live camera feed before capture
+  //   - PHOTO: pinch/drag/rotate a still photo imported from the gallery
+  // The double-tap-to-flip gesture still only fires in LIVE.
+  const isStep3Transformable = (m) => (
+    m === STEP3_MODE.LIVE || m === STEP3_MODE.PHOTO
+  );
+
   const handleStep3PointerDown = useCallback((e) => {
-    if (step3Mode !== STEP3_MODE.LIVE || activeToolRef.current) return;
+    if (!isStep3Transformable(step3Mode) || activeToolRef.current) return;
     e.preventDefault();
     if (e.isPrimary === false) {
       step3CameraTransform.handlePointerDown(e);
@@ -1454,7 +1520,8 @@ export default function InviterPage() {
   }, [step3CameraTransform, step3Mode]);
 
   const handleStep3PointerMove = useCallback((e) => {
-    if (step3Mode !== STEP3_MODE.LIVE || step3RecordingRef.current || step3RecordingStartingRef.current) return;
+    if (!isStep3Transformable(step3Mode)) return;
+    if (step3Mode === STEP3_MODE.LIVE && (step3RecordingRef.current || step3RecordingStartingRef.current)) return;
     const moved = step3CameraTransform.handlePointerMove(e);
     if (!moved) return;
     step3PointerMovedRef.current = true;
@@ -1463,7 +1530,7 @@ export default function InviterPage() {
   }, [step3CameraTransform, step3Mode]);
 
   const handleStep3PointerUp = useCallback(async (e) => {
-    if (step3Mode !== STEP3_MODE.LIVE) return;
+    if (!isStep3Transformable(step3Mode)) return;
     e.preventDefault();
     const movedCamera = step3CameraTransform.handlePointerUp(e) || step3PointerMovedRef.current;
     if (step3PointerIdRef.current !== null && e.pointerId !== step3PointerIdRef.current) {
@@ -1482,6 +1549,11 @@ export default function InviterPage() {
     step3PointerMovedRef.current = false;
     clearTimeout(step3LongPressTimerRef.current);
     step3LongPressTimerRef.current = null;
+
+    // Recording / countdown / tap-to-capture / double-tap-flip all only make
+    // sense for the live camera feed. In PHOTO mode the pointer just drives
+    // pan/zoom/rotate of the still image.
+    if (step3Mode !== STEP3_MODE.LIVE) return;
 
     if (step3RecordingRef.current || step3RecordingStartingRef.current) {
       stopStep3Recording();
@@ -1512,7 +1584,7 @@ export default function InviterPage() {
   }, [cancelStep3Countdown, handleStep3FlipCamera, step3CameraTransform, step3Mode, stopStep3Recording]);
 
   const handleStep3PointerCancel = useCallback((e) => {
-    if (step3Mode !== STEP3_MODE.LIVE) return;
+    if (!isStep3Transformable(step3Mode)) return;
     e.preventDefault();
     const movedCamera = step3CameraTransform.handlePointerUp(e) || step3PointerMovedRef.current;
     if (step3PointerIdRef.current !== null && e.pointerId !== step3PointerIdRef.current) {
@@ -1771,7 +1843,10 @@ export default function InviterPage() {
       const invite = await createInvite({
         frameUrl: upload.url,
         frameName: activeFrameName,
-        username: 'yunchai',
+        // Use the name the user entered in the share popup (persisted across
+        // sessions in localStorage). Fall back to a friendly placeholder so
+        // the API never sees an empty string.
+        username: usernameRef.current || 'friend',
       });
       const inviteUrl = invite.id ? buildInviteUrl(invite.id) : invite.inviteUrl;
       if (navigator.share) {
@@ -1781,6 +1856,7 @@ export default function InviterPage() {
             text: `${activeFrameName} is ready for your Retake`,
             url: inviteUrl,
           });
+          showToast('Invite shared!');
           return;
         } catch (err) {
           if (err?.name === 'AbortError') return;
@@ -1801,7 +1877,8 @@ export default function InviterPage() {
   }, [openEditName]);
 
   const handleEditNameSave = useCallback(() => {
-    const nextName = saveEditName();
+    const result = saveEditName();
+    const nextName = typeof result === 'string' ? result : result?.name;
     setEditNameSaveLabel('Save');
     if (!pendingShareAfterNameRef.current) return;
     pendingShareAfterNameRef.current = false;
@@ -2004,6 +2081,30 @@ export default function InviterPage() {
   const handleBgGallery = useCallback(() => {
     if (galleryInputRef.current) galleryInputRef.current.click();
   }, []);
+
+  // Step3 LIVE: open the device gallery to pick a still photo to compose with
+  // the current frame, bypassing the live camera. Switches step3Mode to PHOTO
+  // so the review tools (drawing, stickers, share) immediately apply.
+  const handleStep3GalleryClick = useCallback(() => {
+    step3GalleryInputRef.current?.click();
+  }, []);
+
+  const handleStep3GalleryChange = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (e.target) e.target.value = '';
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    cancelStep3Countdown();
+    stopStep3Recording();
+    stopStep3Camera();
+    step3CameraTransform.reset(false);
+    setStep3PhotoUrl(url);
+    revokeStep3VideoUrl();
+    setStep3VideoUrl('');
+    step3VideoBlobRef.current = null;
+    setStep3Mode(STEP3_MODE.PHOTO);
+    showToast('Photo loaded — add stickers or share');
+  }, [cancelStep3Countdown, revokeStep3VideoUrl, showToast, step3CameraTransform, stopStep3Camera, stopStep3Recording]);
 
   const handleProceedToStep3 = useCallback(async () => {
     await finalizeS2LiveDecoratorsToCanvas(true);
@@ -2355,7 +2456,37 @@ export default function InviterPage() {
         />
       )}
 
-      {isStep3 && !isStep3CaptureBusy && !stickerMakerVisible && (
+      {/* Step3 LIVE preview gets a custom 3-button bottom layout matching the
+          invitee camera screen: gallery on the left, Share centered, flip on
+          the right. RetakeCameraBottomBar (Back + Share) is kept for the
+          PHOTO/VIDEO review modes where the user is making a final decision
+          on a captured Retake. */}
+      {isStep3Live && !isStep3CaptureBusy && !stickerMakerVisible && (
+        <>
+          <GlassIconButton
+            className="inviter-step3-gallery-btn"
+            icon="photo"
+            label="Pick a photo from library"
+            onClick={handleStep3GalleryClick}
+          />
+          <GlassIconButton
+            className="inviter-step3-share-btn"
+            icon="share"
+            label="Share frame"
+            shape="pill"
+            onClick={openSavedFrames}
+          >
+            <span className="inviter-step3-share-label">Share</span>
+          </GlassIconButton>
+          <GlassIconButton
+            className="inviter-step3-flip-btn"
+            icon="flipCamera"
+            label="Flip camera"
+            onClick={handleStep3FlipCamera}
+          />
+        </>
+      )}
+      {isStep3 && !isStep3Live && !isStep3CaptureBusy && !stickerMakerVisible && (
         <RetakeCameraBottomBar
           visible
           out={bottomBarOut}
@@ -2373,6 +2504,14 @@ export default function InviterPage() {
           onPrimary={openSavedFrames}
         />
       )}
+      {/* Hidden file input that handleStep3GalleryClick targets. */}
+      <input
+        type="file"
+        ref={step3GalleryInputRef}
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={handleStep3GalleryChange}
+      />
 
       <DrawingToolOverlays
         tmLeftPanelRef={tmLeftPanelRef}
@@ -2417,6 +2556,8 @@ export default function InviterPage() {
         visible={editNameVisible}
         inputValue={editNameInputValue}
         onChange={e => setEditNameInputValue(e.target.value)}
+        usernameValue={editUsernameInputValue}
+        onUsernameChange={e => setEditUsernameInputValue(e.target.value)}
         onSave={handleEditNameSave}
         saveLabel={editNameSaveLabel}
       />
