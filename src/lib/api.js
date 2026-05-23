@@ -26,8 +26,53 @@ function readLocalRecord(key) {
   }
 }
 
+// localStorage on iOS Safari has a hard ~5 MB quota per origin. Since the DEV
+// fake-backend stores entire image/video data URLs (1–2 MB each), the quota is
+// blown after only a handful of invites or retakes. Rather than letting the
+// app crash, drop the oldest entries and retry, then silently skip if even
+// pruning can't make room. Real production code stores blobs in Vercel Blob
+// instead of localStorage, so this only matters in dev.
+function isQuotaError(err) {
+  if (!err) return false;
+  return err.name === 'QuotaExceededError'
+    || err.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+    || err.code === 22
+    || err.code === 1014;
+}
+
+function pruneOldestEntries(record, targetCount) {
+  // Records are keyed by id; values may have `createdAt` we can sort on.
+  const entries = Object.entries(record);
+  entries.sort((a, b) => {
+    const av = a[1]?.createdAt || '';
+    const bv = b[1]?.createdAt || '';
+    return av.localeCompare(bv);
+  });
+  const next = {};
+  for (const [k, v] of entries.slice(-targetCount)) next[k] = v;
+  return next;
+}
+
 function writeLocalRecord(key, value) {
-  window.localStorage.setItem(key, JSON.stringify(value));
+  let payload = value;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(payload));
+      return;
+    } catch (err) {
+      if (!isQuotaError(err)) return;
+      if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        const keep = Math.max(1, Math.floor(Object.keys(payload).length / 2));
+        payload = pruneOldestEntries(payload, keep);
+        continue;
+      }
+      // Non-object payload (or already pruned to nothing): give up silently so
+      // the calling flow can keep working with in-memory state only.
+      console.warn(`[api] localStorage quota exceeded for "${key}"; skipping persistence.`);
+      try { window.localStorage.removeItem(key); } catch { /* ignore */ }
+      return;
+    }
+  }
 }
 
 function blobToDataUrl(blob) {
