@@ -1,5 +1,6 @@
 import { put } from '@vercel/blob';
 import { randomBytes } from 'node:crypto';
+import { applyCors } from './_cors.js';
 
 const INVITE_ID_RE = /^[a-zA-Z0-9_-]{6,64}$/;
 
@@ -19,6 +20,8 @@ function isAllowedBlobUrl(mediaUrl) {
 }
 
 export default async function handler(req, res) {
+  if (applyCors(req, res, 'POST,OPTIONS')) return;
+
   if (req.method !== 'POST') return res.status(405).end();
 
   if (!process.env.BLOB_READ_WRITE_TOKEN) {

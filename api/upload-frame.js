@@ -1,4 +1,5 @@
 import { put } from '@vercel/blob';
+import { applyCors } from './_cors.js';
 
 export const config = {
   api: { bodyParser: { sizeLimit: '5mb' } },
@@ -12,6 +13,8 @@ function safeFrameName(frameName) {
 }
 
 export default async function handler(req, res) {
+  if (applyCors(req, res, 'POST,OPTIONS')) return;
+
   if (req.method !== 'POST') return res.status(405).end();
 
   if (!process.env.BLOB_READ_WRITE_TOKEN) {

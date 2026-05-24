@@ -1,5 +1,6 @@
 import { get, list, put } from '@vercel/blob';
 import { randomBytes } from 'node:crypto';
+import { applyCors } from './_cors.js';
 
 const INVITE_ID_RE = /^[a-zA-Z0-9_-]{6,64}$/;
 const DEFAULT_USERNAME = 'yunchai';
@@ -92,6 +93,8 @@ async function getInvite(pathname) {
 }
 
 export default async function handler(req, res) {
+  if (applyCors(req, res)) return;
+
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     return res.status(500).json({
       error: 'Blob token missing',

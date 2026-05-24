@@ -1,8 +1,11 @@
 import { handleUpload } from '@vercel/blob/client';
+import { applyCors } from './_cors.js';
 
 const INVITE_ID_RE = /^[a-zA-Z0-9_-]{6,64}$/;
 
 export default async function handler(req, res) {
+  if (applyCors(req, res, 'POST,OPTIONS')) return;
+
   if (req.method !== 'POST') return res.status(405).end();
 
   if (!process.env.BLOB_READ_WRITE_TOKEN) {

@@ -81,7 +81,24 @@ Create an invite from the inviter S3 share action, then open:
 https://192.168.0.72:5174/invite/:inviteId
 ```
 
-For local UI against a deployed API, set `VITE_API_ORIGIN` before starting Vite.
+In default dev mode, invites and retakes are stored in the current browser's
+`localStorage`. That means an invite created on desktop Safari/Chrome will not
+exist on iPhone Safari unless the local UI is connected to a shared API.
+
+For local UI against a deployed Vercel API, set `VITE_API_ORIGIN` before
+starting Vite:
+
+```bash
+VITE_API_ORIGIN=https://YOUR-VERCEL-DEPLOYMENT.vercel.app npm run dev
+```
+
+The deployed project must have a Vercel Blob store connected, or a
+`BLOB_READ_WRITE_TOKEN` environment variable configured for the target
+environment. After adding Blob storage or env vars in Vercel, redeploy the app.
+
+The API routes allow CORS from local LAN dev origins such as
+`https://192.168.x.x:5174`, localhost, and Vercel preview domains so iPhone
+testing can use the local HTTPS UI with shared deployed invite data.
 
 ## GitHub Workflow
 

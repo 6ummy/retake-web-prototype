@@ -1,4 +1,8 @@
+import { applyCors } from './_cors.js';
+
 export default async function handler(req, res) {
+  if (applyCors(req, res, 'GET,OPTIONS')) return;
+
   if (req.method !== 'GET') return res.status(405).end();
 
   if (!process.env.BLOB_READ_WRITE_TOKEN) {

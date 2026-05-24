@@ -430,7 +430,38 @@ ngrok http https://localhost:5174
 
 ---
 
-## 11. 보안 메모
+## 11. 로컬 UI를 Vercel API에 연결하기
+
+기본 로컬 개발 모드는 초대장/리테이크 데이터를 현재 브라우저의 `localStorage`에 저장한다.
+그래서 Mac에서 만든 초대 링크를 iPhone에서 열면, iPhone Safari에는 같은 저장소가 없어서
+`Invite unavailable` 상태가 뜰 수 있다.
+
+여러 기기에서 같은 초대 링크를 테스트하려면 로컬 Vite UI가 배포된 Vercel API를 쓰게 한다:
+
+```bash
+VITE_API_ORIGIN=https://YOUR-VERCEL-DEPLOYMENT.vercel.app npm run dev
+```
+
+Vercel 배포본에서 아래 응답이 보이면 Blob 저장소가 아직 프로젝트에 연결되지 않은 상태다:
+
+```txt
+Connect a Vercel Blob store to this project or add BLOB_READ_WRITE_TOKEN in Vercel project environment variables.
+```
+
+해결:
+
+1. Vercel Dashboard → 프로젝트 → Storage → Blob에서 Blob store를 연결한다.
+2. `BLOB_READ_WRITE_TOKEN`이 Production/Preview 환경에 추가되었는지 확인한다.
+3. 환경변수 추가 후 프로젝트를 다시 배포한다.
+4. 로컬에서는 `VITE_API_ORIGIN`을 배포 URL로 설정하고 dev server를 재시작한다.
+
+API 라우트는 로컬 LAN HTTPS 오리진(`https://192.168.x.x:5174`, `https://10.x.x.x:5174`),
+localhost, Vercel preview 도메인에서 오는 CORS 요청을 허용한다. 따라서 iPhone은 로컬 UI에
+접속하면서도 초대장 데이터는 배포된 Vercel Blob/API를 공유할 수 있다.
+
+---
+
+## 12. 보안 메모
 
 - `rootCA-key.pem`은 PC 안에서만 보관, **외부 전송 금지**
 - 이 셋업은 **로컬 개발 전용**. 운영 환경에는 절대 가져가지 말 것
@@ -442,7 +473,7 @@ ngrok http https://localhost:5174
 
 ---
 
-## 12. 다음 단계 후보 (참고)
+## 13. 다음 단계 후보 (참고)
 
 이 로컬 셋업으로 카메라 테스트가 정상 동작하는 걸 확인했다면,
 실제 모바일(iOS) 출시까지의 다음 단계는 `plan.md`의 **6. iOS 백엔드 디플로이 단계**를 참고:
